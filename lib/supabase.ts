@@ -1,5 +1,7 @@
 import "react-native-url-polyfill/auto";
+import { processLock } from "@supabase/auth-js";
 import { createClient } from "@supabase/supabase-js";
+import { Platform } from "react-native";
 
 import { supabaseAuthStorage } from "@/lib/supabase-auth-storage";
 
@@ -21,6 +23,8 @@ export const supabase = createClient(
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      // Web Locks API (default) races when getSession + onAuthStateChange run together.
+      lock: Platform.OS === "web" ? processLock : undefined,
     },
   }
 );

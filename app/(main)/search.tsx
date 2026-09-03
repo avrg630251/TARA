@@ -8,6 +8,7 @@ import {
   Alert,
   Animated,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -133,7 +134,18 @@ export default function SearchMapScreen() {
   );
   const [navLatitude, setNavLatitude] = useState(latitude);
   const [navLongitude, setNavLongitude] = useState(longitude);
-  const tripWatchRef = useRef<{ remove: () => void } | null>(null);
+  const tripWatchRef = useRef<(() => void) | null>(null);
+
+  const stopTripWatch = useCallback(() => {
+    if (!tripWatchRef.current) return;
+    try {
+      tripWatchRef.current();
+    } catch {
+      // Some web expo-location versions throw during remove; swallow and continue.
+    } finally {
+      tripWatchRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     const dest = pickSearchParam(params.destination);
@@ -209,14 +221,13 @@ export default function SearchMapScreen() {
   );
 
   const clearRoute = useCallback(() => {
-    tripWatchRef.current?.remove();
-    tripWatchRef.current = null;
+    stopTripWatch();
     setTripActivePlan(null);
     setRoutePlans([]);
     setSelectedPlanId(null);
     setDestinationCoord(null);
     setRouteError(null);
-  }, []);
+  }, [stopTripWatch]);
 
   useEffect(() => {
     if (activeInput !== "origin") return;
@@ -357,10 +368,9 @@ export default function SearchMapScreen() {
   }, [tripActivePlan, destinationCoord, navLatitude, navLongitude]);
 
   const endTrip = useCallback(() => {
-    tripWatchRef.current?.remove();
-    tripWatchRef.current = null;
+    stopTripWatch();
     setTripActivePlan(null);
-  }, []);
+  }, [stopTripWatch]);
 
   const startTrip = useCallback(
     async (plan: DisplayRoutePlan) => {
@@ -396,14 +406,38 @@ export default function SearchMapScreen() {
 
   useEffect(() => {
     if (!tripActivePlan) {
-      tripWatchRef.current?.remove();
-      tripWatchRef.current = null;
+      stopTripWatch();
       return;
     }
 
     let cancelled = false;
 
     (async () => {
+      if (
+        Platform.OS === "web" &&
+        typeof navigator !== "undefined" &&
+        navigator.geolocation
+      ) {
+        const watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            if (cancelled) return;
+            setNavLatitude(pos.coords.latitude);
+            setNavLongitude(pos.coords.longitude);
+          },
+          () => {
+            // Keep last known location if watcher fails.
+          },
+          { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+        );
+        if (cancelled) {
+          navigator.geolocation.clearWatch(watchId);
+          return;
+        }
+        stopTripWatch();
+        tripWatchRef.current = () => navigator.geolocation.clearWatch(watchId);
+        return;
+      }
+
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.BestForNavigation,
@@ -417,19 +451,28 @@ export default function SearchMapScreen() {
         }
       );
       if (cancelled) {
-        sub.remove();
+        try {
+          sub.remove();
+        } catch {
+          // ignore
+        }
         return;
       }
-      tripWatchRef.current?.remove();
-      tripWatchRef.current = sub;
+      stopTripWatch();
+      tripWatchRef.current = () => {
+        try {
+          sub.remove();
+        } catch {
+          // ignore
+        }
+      };
     })();
 
     return () => {
       cancelled = true;
-      tripWatchRef.current?.remove();
-      tripWatchRef.current = null;
+      stopTripWatch();
     };
-  }, [tripActivePlan?.id]);
+  }, [tripActivePlan?.id, stopTripWatch]);
 
   useEffect(() => {
     let cancelled = false;
