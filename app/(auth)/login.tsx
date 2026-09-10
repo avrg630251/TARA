@@ -50,7 +50,7 @@ export default function LoginScreen() {
         <Text style={styles.title}>Sign In</Text>
 
         <View style={styles.card}>
-          <Text style={styles.label}>Username</Text>
+          <Text style={styles.label}>Email</Text>
           <TextInput
             style={styles.input}
             value={email}
