@@ -30,6 +30,11 @@ import {
   type PlaceSuggestion,
 } from "@/lib/googleMapsRoutes";
 import {
+  type ClassScheduleItem,
+  loadClassSchedules,
+  sortRoutesForSchedule,
+} from "@/lib/classSchedules";
+import {
   composeTransitPlanOptions,
   type DisplayRoutePlan,
 } from "@/lib/transitPlanOptions";
@@ -93,12 +98,12 @@ export default function SearchMapScreen() {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const expandedSheetHeight = Math.min(
-    Math.max(windowHeight * 0.62, 360),
-    windowHeight * 0.78
+    Math.max(windowHeight * 0.72, 430),
+    windowHeight * 0.84
   );
   const collapsedSheetHeight = Math.min(
-    Math.max(windowHeight * 0.36, 250),
-    windowHeight * 0.5
+    Math.max(windowHeight * 0.26, 220),
+    windowHeight * 0.42
   );
   const maxSheetTranslateY = Math.max(0, expandedSheetHeight - collapsedSheetHeight);
   const sheetTranslateY = useRef(new Animated.Value(maxSheetTranslateY)).current;
@@ -129,6 +134,7 @@ export default function SearchMapScreen() {
   const [discountCode, setDiscountCode] = useState<DiscountCode>("regular");
   const [routeLoading, setRouteLoading] = useState(false);
   const [hasRouteSearch, setHasRouteSearch] = useState(false);
+  const [classSchedules, setClassSchedules] = useState<ClassScheduleItem[]>([]);
   const [tripActivePlan, setTripActivePlan] = useState<DisplayRoutePlan | null>(
     null
   );
@@ -154,7 +160,25 @@ export default function SearchMapScreen() {
     if (orig) setOriginLabel(orig);
     if (dest) setDestination(dest);
     router.setParams({ origin: undefined, destination: undefined });
+
+    const hasDefinedRoute = Boolean(orig || dest);
+    if (hasDefinedRoute) {
+      const timer = setTimeout(() => {
+        void buildRoute();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
   }, [params.destination, params.origin, router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadClassSchedules().then((items) => {
+      if (!cancelled) setClassSchedules(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const fitEdgePadding = useMemo(
     () => ({
@@ -319,16 +343,16 @@ export default function SearchMapScreen() {
       };
     });
 
+    let ordered: DisplayRoutePlan[];
+
     if (filter === "fastest") {
-      return [...withFares].sort((a, b) => {
+      ordered = [...withFares].sort((a, b) => {
         const aEta = a.etaMinutes ?? Number.POSITIVE_INFINITY;
         const bEta = b.etaMinutes ?? Number.POSITIVE_INFINITY;
         return aEta - bEta;
       });
-    }
-
-    if (filter === "cheapest") {
-      return [...withFares].sort((a, b) => {
+    } else if (filter === "cheapest") {
+      ordered = [...withFares].sort((a, b) => {
         const aFare = a.fareValue ?? Number.POSITIVE_INFINITY;
         const bFare = b.fareValue ?? Number.POSITIVE_INFINITY;
         if (aFare !== bFare) return aFare - bFare;
@@ -336,14 +360,20 @@ export default function SearchMapScreen() {
         const bScore = b.generalizedCost ?? Number.POSITIVE_INFINITY;
         return aScore - bScore;
       });
+    } else {
+      ordered = [...withFares].sort((a, b) => {
+        const aScore = a.generalizedCost ?? Number.POSITIVE_INFINITY;
+        const bScore = b.generalizedCost ?? Number.POSITIVE_INFINITY;
+        return aScore - bScore;
+      });
     }
 
-    return [...withFares].sort((a, b) => {
-      const aScore = a.generalizedCost ?? Number.POSITIVE_INFINITY;
-      const bScore = b.generalizedCost ?? Number.POSITIVE_INFINITY;
-      return aScore - bScore;
-    });
-  }, [routePlans, discountCode, filter]);
+    if (classSchedules.length > 0) {
+      ordered = sortRoutesForSchedule(ordered, classSchedules);
+    }
+
+    return ordered;
+  }, [routePlans, discountCode, filter, classSchedules]);
 
   const routeAlternativesForMap = useMemo(() => {
     if (!routes.some((r) => r.polyline.length > 1)) return undefined;
@@ -990,109 +1020,115 @@ export default function SearchMapScreen() {
           <View style={styles.grabber} />
           </Pressable>
         </View>
-        <Text style={styles.sheetTitle}>Available Routes</Text>
+        <ScrollView
+          style={styles.sheetScroll}
+          contentContainerStyle={styles.sheetContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.sheetTitle}>Available Routes</Text>
 
-        <Text style={styles.controlLabel}>Radius</Text>
-        <View style={styles.chipsRow}>
-          {[500, 1000, 2000].map((m) => (
-            <Pressable
-              key={m}
-              onPress={() => {
-                setRadiusMeters(m);
-                setRoutePlans([]);
-                setSelectedPlanId(null);
-              }}
-              style={[
-                styles.chip,
-                radiusMeters === m ? styles.chipActive : styles.chipOutline,
-              ]}
-            >
-              <Text
+          <Text style={styles.controlLabel}>Radius</Text>
+          <View style={styles.chipsRow}>
+            {[500, 1000, 2000].map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => {
+                  setRadiusMeters(m);
+                  setRoutePlans([]);
+                  setSelectedPlanId(null);
+                }}
                 style={[
-                  styles.chipText,
-                  radiusMeters === m && styles.chipTextActive,
+                  styles.chip,
+                  radiusMeters === m ? styles.chipActive : styles.chipOutline,
                 ]}
               >
-                Radius {m >= 1000 ? `${m / 1000} km` : `${m} m`}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+                <Text
+                  style={[
+                    styles.chipText,
+                    radiusMeters === m && styles.chipTextActive,
+                  ]}
+                >
+                  Radius {m >= 1000 ? `${m / 1000} km` : `${m} m`}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
 
-        <Text style={styles.controlLabel}>Passenger Type</Text>
-        <View style={styles.chipsRow}>
-          {(
-            [
-              { key: "regular" as const, label: "Regular" },
-              { key: "student" as const, label: "Student" },
-              { key: "pwd" as const, label: "PWD" },
-              { key: "senior" as const, label: "Senior" },
-            ] as const
-          ).map(({ key, label }) => (
-            <Pressable
-              key={key}
-              onPress={() => {
-                setDiscountCode(key);
-              }}
-              style={[
-                styles.chip,
-                discountCode === key ? styles.chipActive : styles.chipOutline,
-              ]}
-            >
-              <Text
+          <Text style={styles.controlLabel}>Passenger Type</Text>
+          <View style={styles.chipsRow}>
+            {(
+              [
+                { key: "regular" as const, label: "Regular" },
+                { key: "student" as const, label: "Student" },
+                { key: "pwd" as const, label: "PWD" },
+                { key: "senior" as const, label: "Senior" },
+              ] as const
+            ).map(({ key, label }) => (
+              <Pressable
+                key={key}
+                onPress={() => {
+                  setDiscountCode(key);
+                }}
                 style={[
-                  styles.chipText,
-                  discountCode === key && styles.chipTextActive,
+                  styles.chip,
+                  discountCode === key ? styles.chipActive : styles.chipOutline,
                 ]}
               >
-                {label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+                <Text
+                  style={[
+                    styles.chipText,
+                    discountCode === key && styles.chipTextActive,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
 
-        <Text style={styles.controlLabel}>Route Preference</Text>
-        <View style={styles.chipsRow}>
-          {(
-            [
-              { key: "all" as const, label: "All Routes" },
-              { key: "fastest" as const, label: "Fastest Routes" },
-              { key: "cheapest" as const, label: "Cheapest Routes" },
-            ] as const
-          ).map(({ key, label }) => (
-            <Pressable
-              key={key}
-              onPress={() => setFilter(key)}
-              style={[
-                styles.chip,
-                filter === key ? styles.chipActive : styles.chipOutline,
-              ]}
-            >
-              <Text
+          <Text style={styles.controlLabel}>Route Preference</Text>
+          <View style={styles.chipsRow}>
+            {(
+              [
+                { key: "all" as const, label: "All Routes" },
+                { key: "fastest" as const, label: "Fastest Routes" },
+                { key: "cheapest" as const, label: "Cheapest Routes" },
+              ] as const
+            ).map(({ key, label }) => (
+              <Pressable
+                key={key}
+                onPress={() => setFilter(key)}
                 style={[
-                  styles.chipText,
-                  filter === key && styles.chipTextActive,
+                  styles.chip,
+                  filter === key ? styles.chipActive : styles.chipOutline,
                 ]}
               >
-                {label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+                <Text
+                  style={[
+                    styles.chipText,
+                    filter === key && styles.chipTextActive,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
 
-        {routes.length === 0 ? (
-          <Text style={styles.noRoutesText}>
-            {hasRouteSearch
-              ? "No routes found for this destination in your database."
-              : "No routes yet. Search a destination first."}
-          </Text>
-        ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.cardsScroll}
-            style={styles.cardsScrollOuter}
-          >
+          {routes.length === 0 ? (
+            <Text style={styles.noRoutesText}>
+              {hasRouteSearch
+                ? "No routes found for this destination in your database."
+                : "No routes yet. Search a destination first."}
+            </Text>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.cardsScroll}
+              style={styles.cardsScrollOuter}
+            >
             {routes.map((r) => {
               const destLabel = destination.trim();
               const isSelected =
@@ -1173,7 +1209,8 @@ export default function SearchMapScreen() {
               );
             })}
           </ScrollView>
-        )}
+          )}
+        </ScrollView>
       </Animated.View>
       ) : null}
     </View>
@@ -1183,7 +1220,7 @@ export default function SearchMapScreen() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: "#000",
+    backgroundColor: "#e9ecef",
   },
   topSafe: {
     position: "absolute",
@@ -1359,6 +1396,13 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 12,
     zIndex: 3,
+    overflow: "hidden",
+  },
+  sheetScroll: {
+    flex: 1,
+  },
+  sheetContent: {
+    paddingBottom: 12,
   },
   grabber: {
     alignSelf: "center",

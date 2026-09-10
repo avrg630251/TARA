@@ -9,7 +9,6 @@ import {
   View,
 } from "react-native";
 
-import { AuthBackButton } from "@/components/AuthBackButton";
 import { AuthScreen } from "@/components/AuthScreen";
 import { PasswordField } from "@/components/PasswordField";
 import { supabase } from "@/lib/supabase";
@@ -46,59 +45,61 @@ export default function LoginScreen() {
 
   return (
     <AuthScreen>
-      <View style={styles.card}>
-        <AuthBackButton />
-        <Text style={styles.brand}>TARA</Text>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Sign in to continue</Text>
+      <View style={styles.page}>
+        <Text style={styles.brand}>TARA!</Text>
+        <Text style={styles.title}>Sign In</Text>
 
-        <Text style={styles.label}>Email</Text>
-        <TextInput
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          placeholder="you@example.com"
-          placeholderTextColor="#94a3b8"
-          autoCapitalize="none"
-          autoComplete="email"
-          keyboardType="email-address"
-          textContentType="emailAddress"
-        />
+        <View style={styles.card}>
+          <Text style={styles.label}>Username</Text>
+          <TextInput
+            style={styles.input}
+            value={email}
+            onChangeText={setEmail}
+            placeholder=""
+            placeholderTextColor="#9ca3af"
+            autoCapitalize="none"
+            autoComplete="email"
+            keyboardType="email-address"
+            textContentType="emailAddress"
+          />
 
-        <Text style={styles.label}>Password</Text>
-        <PasswordField
-          value={password}
-          onChangeText={setPassword}
-          placeholder="••••••••"
-          autoComplete="password"
-          textContentType="password"
-        />
+          <Text style={styles.label}>Password</Text>
+          <PasswordField
+            value={password}
+            onChangeText={setPassword}
+            placeholder=""
+            autoComplete="password"
+            textContentType="password"
+          />
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+          <Text style={styles.forgot}>Forgot password?</Text>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.primaryBtn,
-            pressed && styles.primaryBtnPressed,
-            submitting && styles.primaryBtnDisabled,
-          ]}
-          onPress={onSubmit}
-          disabled={submitting}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.primaryBtnText}>Sign in</Text>
-          )}
-        </Pressable>
+          {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>No account? </Text>
-          <Link href="/signup" asChild>
-            <Pressable>
-              <Text style={styles.link}>Create one</Text>
-            </Pressable>
-          </Link>
+          <Pressable
+            style={({ pressed }) => [
+              styles.primaryBtn,
+              pressed && styles.primaryBtnPressed,
+              submitting && styles.primaryBtnDisabled,
+            ]}
+            onPress={onSubmit}
+            disabled={submitting}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.primaryBtnText}>Sign In</Text>
+            )}
+          </Pressable>
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Don&apos;t have account? </Text>
+            <Link href="/signup" asChild>
+              <Pressable>
+                <Text style={styles.link}>Sign Up</Text>
+              </Pressable>
+            </Link>
+          </View>
         </View>
       </View>
     </AuthScreen>
@@ -106,45 +107,60 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    maxWidth: 400,
+  page: {
     width: "100%",
+    maxWidth: 390,
     alignSelf: "center",
+    paddingTop: 12,
   },
   brand: {
-    fontSize: 28,
+    fontSize: 52,
+    lineHeight: 60,
     fontWeight: "800",
-    color: "#1B4332",
-    letterSpacing: 1,
-    marginBottom: 8,
+    color: "#FFFFFF",
+    letterSpacing: -1.2,
+    marginBottom: 2,
+    textAlign: "left",
   },
   title: {
-    fontSize: 24,
+    fontSize: 34,
+    lineHeight: 42,
     fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 4,
+    color: "#FFFFFF",
+    marginBottom: 18,
   },
-  subtitle: {
-    fontSize: 15,
-    color: "#64748b",
-    marginBottom: 28,
+  card: {
+    width: "100%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
   },
   label: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#334155",
-    marginBottom: 6,
+    fontSize: 17,
+    fontWeight: "400",
+    color: "#1f2937",
+    marginBottom: 8,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: "#d1d5db",
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    fontSize: 16,
+    fontSize: 18,
     color: "#0f172a",
     backgroundColor: "#fff",
     marginBottom: 16,
+  },
+  forgot: {
+    textAlign: "center",
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#1f2937",
+    marginTop: 6,
+    marginBottom: 20,
   },
   error: {
     color: "#dc2626",
@@ -152,11 +168,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   primaryBtn: {
-    backgroundColor: "#1B4332",
+    backgroundColor: "#1C5141",
     borderRadius: 12,
-    paddingVertical: 14,
+    paddingVertical: 15,
     alignItems: "center",
-    marginTop: 8,
+    marginTop: 10,
   },
   primaryBtnPressed: {
     opacity: 0.9,
@@ -166,22 +182,24 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: {
     color: "#fff",
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "600",
   },
   footer: {
     flexDirection: "row",
     justifyContent: "center",
-    marginTop: 24,
+    alignItems: "center",
+    marginTop: 20,
     flexWrap: "wrap",
   },
   footerText: {
-    fontSize: 15,
-    color: "#64748b",
+    fontSize: 16,
+    color: "#1f2937",
   },
   link: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "600",
-    color: "#1B4332",
+    color: "#1C5141",
+    textDecorationLine: "underline",
   },
 });

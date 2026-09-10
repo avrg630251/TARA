@@ -9,13 +9,13 @@ import {
   View,
 } from "react-native";
 
-import { AuthBackButton } from "@/components/AuthBackButton";
 import { AuthScreen } from "@/components/AuthScreen";
 import { PasswordField } from "@/components/PasswordField";
 import { supabase } from "@/lib/supabase";
 
 export default function SignupScreen() {
   const router = useRouter();
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -26,9 +26,9 @@ export default function SignupScreen() {
   async function onSubmit() {
     setError(null);
     setInfo(null);
-    const trimmed = email.trim();
-    if (!trimmed || !password) {
-      setError("Enter your email and password.");
+    const trimmedEmail = email.trim();
+    if (!fullName.trim() || !trimmedEmail || !password) {
+      setError("Enter your full name, email, and password.");
       return;
     }
     if (password.length < 8) {
@@ -42,8 +42,13 @@ export default function SignupScreen() {
 
     setSubmitting(true);
     const { data, error: signUpError } = await supabase.auth.signUp({
-      email: trimmed,
+      email: trimmedEmail,
       password,
+      options: {
+        data: {
+          full_name: fullName.trim(),
+        },
+      },
     });
     setSubmitting(false);
 
@@ -64,68 +69,81 @@ export default function SignupScreen() {
 
   return (
     <AuthScreen>
-      <View style={styles.card}>
-        <AuthBackButton />
-        <Text style={styles.title}>Create account</Text>
-        <Text style={styles.subtitle}>Join TARA to plan your trips</Text>
+      <View style={styles.page}>
+        <Text style={styles.brand}>TARA!</Text>
+        <Text style={styles.title}>Sign Up</Text>
 
-        <Text style={styles.label}>Email</Text>
-        <TextInput
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          placeholder="you@example.com"
-          placeholderTextColor="#94a3b8"
-          autoCapitalize="none"
-          autoComplete="email"
-          keyboardType="email-address"
-          textContentType="emailAddress"
-        />
+        <View style={styles.card}>
+          <Text style={styles.label}>Full Name</Text>
+          <TextInput
+            style={styles.input}
+            value={fullName}
+            onChangeText={setFullName}
+            placeholder=""
+            placeholderTextColor="#9ca3af"
+            autoCapitalize="words"
+            autoComplete="name"
+            textContentType="name"
+          />
 
-        <Text style={styles.label}>Password</Text>
-        <PasswordField
-          value={password}
-          onChangeText={setPassword}
-          placeholder="At least 8 characters"
-          autoComplete="new-password"
-          textContentType="newPassword"
-        />
+          <Text style={styles.label}>Username</Text>
+          <TextInput
+            style={styles.input}
+            value={email}
+            onChangeText={setEmail}
+            placeholder=""
+            placeholderTextColor="#9ca3af"
+            autoCapitalize="none"
+            autoComplete="email"
+            keyboardType="email-address"
+            textContentType="emailAddress"
+          />
 
-        <Text style={styles.label}>Confirm password</Text>
-        <PasswordField
-          value={confirm}
-          onChangeText={setConfirm}
-          placeholder="Repeat password"
-          autoComplete="new-password"
-          textContentType="newPassword"
-        />
+          <Text style={styles.label}>Password</Text>
+          <PasswordField
+            value={password}
+            onChangeText={setPassword}
+            placeholder=""
+            autoComplete="new-password"
+            textContentType="newPassword"
+          />
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {info ? <Text style={styles.info}>{info}</Text> : null}
+          <Text style={styles.label}>Confirm Password</Text>
+          <PasswordField
+            value={confirm}
+            onChangeText={setConfirm}
+            placeholder=""
+            autoComplete="new-password"
+            textContentType="newPassword"
+          />
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.primaryBtn,
-            pressed && styles.primaryBtnPressed,
-            submitting && styles.primaryBtnDisabled,
-          ]}
-          onPress={onSubmit}
-          disabled={submitting}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.primaryBtnText}>Sign up</Text>
-          )}
-        </Pressable>
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {info ? <Text style={styles.info}>{info}</Text> : null}
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Already have an account? </Text>
-          <Link href="/login" asChild>
-            <Pressable>
-              <Text style={styles.link}>Sign in</Text>
-            </Pressable>
-          </Link>
+          <Pressable
+            style={({ pressed }) => [
+              styles.primaryBtn,
+              pressed && styles.primaryBtnPressed,
+              submitting && styles.primaryBtnDisabled,
+            ]}
+            onPress={onSubmit}
+            disabled={submitting}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.primaryBtnText}>Sign Up</Text>
+            )}
+          </Pressable>
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Already have an account? </Text>
+            <Link href="/login" asChild>
+              <Pressable>
+                <Text style={styles.link}>Sign In</Text>
+              </Pressable>
+            </Link>
+          </View>
         </View>
       </View>
     </AuthScreen>
@@ -133,35 +151,48 @@ export default function SignupScreen() {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    maxWidth: 400,
+  page: {
     width: "100%",
+    maxWidth: 390,
     alignSelf: "center",
+    paddingTop: 12,
+  },
+  brand: {
+    fontSize: 52,
+    lineHeight: 60,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: -1.2,
+    marginBottom: 2,
   },
   title: {
-    fontSize: 24,
+    fontSize: 34,
+    lineHeight: 42,
     fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 4,
+    color: "#FFFFFF",
+    marginBottom: 16,
   },
-  subtitle: {
-    fontSize: 15,
-    color: "#64748b",
-    marginBottom: 28,
+  card: {
+    width: "100%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
   },
   label: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#334155",
-    marginBottom: 6,
+    fontSize: 17,
+    fontWeight: "400",
+    color: "#1f2937",
+    marginBottom: 8,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: "#d1d5db",
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    fontSize: 16,
+    fontSize: 18,
     color: "#0f172a",
     backgroundColor: "#fff",
     marginBottom: 16,
@@ -178,11 +209,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   primaryBtn: {
-    backgroundColor: "#1B4332",
+    backgroundColor: "#1C5141",
     borderRadius: 12,
-    paddingVertical: 14,
+    paddingVertical: 15,
     alignItems: "center",
-    marginTop: 8,
+    marginTop: 10,
   },
   primaryBtnPressed: {
     opacity: 0.9,
@@ -192,22 +223,24 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: {
     color: "#fff",
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "600",
   },
   footer: {
     flexDirection: "row",
     justifyContent: "center",
-    marginTop: 24,
+    alignItems: "center",
+    marginTop: 20,
     flexWrap: "wrap",
   },
   footerText: {
-    fontSize: 15,
-    color: "#64748b",
+    fontSize: 16,
+    color: "#1f2937",
   },
   link: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "600",
-    color: "#1B4332",
+    color: "#1C5141",
+    textDecorationLine: "underline",
   },
 });

@@ -56,6 +56,24 @@ export default function MainLayout() {
           }}
         />
         <Tabs.Screen
+          name="common-stops"
+          options={{
+            title: "Common Stops",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="pin" size={size ?? 22} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="schedule"
+          options={{
+            title: "Schedule",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="calendar-outline" size={size ?? 22} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
           name="saved"
           options={{
             title: "Saved",

@@ -1,28 +1,28 @@
 import { useRouter } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const GREEN = "#1B4332";
+const GREEN = "#1C5141";
+const WHITE = "#FFFFFF";
+const imgAnimation =
+  "https://www.figma.com/api/mcp/asset/fa7d3011-866a-49bc-9844-39e1712e69cc.png";
 
 export default function WelcomeScreen() {
   const router = useRouter();
 
   return (
-    <View style={styles.root}>
-      <View style={styles.headerShell}>
-        <SafeAreaView edges={["top"]} style={styles.headerSafe}>
-          <View style={styles.headerInner}>
-            <Text style={styles.brand}>TARA</Text>
-            <Text style={styles.greeting}>Welcome</Text>
-            <Text style={styles.tagline}>
-              Plan trips, pick a destination, and find transit options when you
-              are nearby.
-            </Text>
-          </View>
-        </SafeAreaView>
-      </View>
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <View style={styles.root}>
+        <View style={styles.heroWrap}>
+          <Image
+            source={{ uri: imgAnimation }}
+            style={styles.heroImage}
+            resizeMode="cover"
+          />
+        </View>
 
-      <View style={styles.lower}>
+        <Text style={styles.title}>TARA!</Text>
+
         <Pressable
           style={({ pressed }) => [
             styles.primary,
@@ -32,78 +32,69 @@ export default function WelcomeScreen() {
           accessibilityRole="button"
           accessibilityLabel="Get started"
         >
-          <Text style={styles.primaryText}>Get started</Text>
+          <Text style={styles.primaryText}>GET STARTED</Text>
         </Pressable>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: WHITE,
+  },
   root: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: WHITE,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 6,
   },
-  headerShell: {
-    backgroundColor: GREEN,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-    overflow: "hidden",
+  heroWrap: {
+    width: 240,
+    height: 226,
+    marginTop: 26,
+    marginBottom: 6,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  headerSafe: {
-    backgroundColor: GREEN,
+  heroImage: {
+    width: 240,
+    height: 226,
   },
-  headerInner: {
-    paddingHorizontal: 28,
-    paddingTop: 12,
-    paddingBottom: 36,
-  },
-  brand: {
-    fontSize: 40,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: 4,
-    marginBottom: 12,
-  },
-  greeting: {
-    fontSize: 28,
+  title: {
+    fontSize: 48,
+    lineHeight: 48,
+    color: GREEN,
     fontWeight: "700",
-    color: "#fff",
-    marginBottom: 14,
-  },
-  tagline: {
-    fontSize: 16,
-    lineHeight: 25,
-    color: "rgba(255,255,255,0.92)",
-    maxWidth: 380,
-  },
-  lower: {
-    flex: 1,
-    paddingHorizontal: 28,
-    paddingTop: 32,
-    paddingBottom: 40,
-    justifyContent: "flex-end",
-    maxWidth: 420,
-    width: "100%",
-    alignSelf: "center",
+    letterSpacing: -0.48,
+    textAlign: "center",
+    marginTop: 10,
+    marginBottom: 18,
+    fontFamily: "System",
   },
   primary: {
+    width: 278,
+    height: 51,
     backgroundColor: GREEN,
-    borderRadius: 14,
-    paddingVertical: 16,
+    borderRadius: 10,
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
+    justifyContent: "center",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
     elevation: 2,
   },
   primaryPressed: {
-    opacity: 0.9,
+    opacity: 0.96,
   },
   primaryText: {
-    color: "#fff",
-    fontSize: 17,
+    color: WHITE,
+    fontSize: 18,
     fontWeight: "600",
+    letterSpacing: 0,
+    fontFamily: "System",
   },
 });

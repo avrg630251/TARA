@@ -1,25 +1,16 @@
-import { useHeaderHeight } from "@react-navigation/elements";
 import type { ReactNode } from "react";
-import { Platform, StyleSheet, useWindowDimensions } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const BG = "#f8fafc";
+const BG = "#1C5141";
 
 export function AuthScreen({ children }: { children: ReactNode }) {
-  const { height: windowHeight } = useWindowDimensions();
-  const headerHeight = useHeaderHeight();
-
-  const minContentHeight = windowHeight - headerHeight;
-
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
       <KeyboardAwareScrollView
         style={styles.flex}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { minHeight: minContentHeight },
-        ]}
+        contentContainerStyle={styles.scrollContent}
         enableOnAndroid
         enableAutomaticScroll
         extraScrollHeight={Platform.OS === "android" ? 120 : 48}

@@ -21,9 +21,9 @@ import { MapPreview } from "@/components/MapPreview";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
 
-const GREEN = "#1B4332";
-const GREEN_HEADING = "#1B4332";
-const SEARCH_BG = "#E9ECEF";
+const GREEN = "#1C5141";
+const GREEN_HEADING = "#1C5141";
+const SEARCH_BG = "#F7F7F7";
 
 /** Metro area fallback when location permission is denied or unavailable. */
 const FALLBACK_LAT = 14.5995;
@@ -240,8 +240,6 @@ const styles = StyleSheet.create({
   },
   headerShell: {
     backgroundColor: GREEN,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
     overflow: "hidden",
   },
   headerSafe: {
@@ -250,16 +248,16 @@ const styles = StyleSheet.create({
   headerInner: {
     paddingHorizontal: 22,
     paddingTop: 8,
-    paddingBottom: 22,
+    paddingBottom: 24,
   },
   greeting: {
-    fontSize: 26,
+    fontSize: 30,
     fontWeight: "700",
     color: "#fff",
-    marginBottom: 6,
+    marginBottom: 4,
   },
   tagline: {
-    fontSize: 15,
+    fontSize: 16,
     color: "rgba(255,255,255,0.92)",
     marginBottom: 18,
   },
@@ -268,9 +266,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: SEARCH_BG,
     borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 13,
     gap: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   searchRowPressed: {
     opacity: 0.88,
