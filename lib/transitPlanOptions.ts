@@ -23,6 +23,19 @@ export type DisplayRoutePlan = {
   googleSummary?: string;
   /** Matched GTFS row when found. */
   dbRouteId?: string;
+  customFareValue?: number | null;
+  segments?: DisplayRouteSegment[];
+  boardingCoordinate?: LatLng;
+};
+
+export type DisplayRouteSegment = {
+  segmentId: string;
+  segmentType: "walk" | "jeepney" | "tricycle" | "bus";
+  coordinates: LatLng[];
+  label?: string | null;
+  routeId?: string | null;
+  fare?: number | null;
+  durationMinutes?: number | null;
 };
 
 function norm(s: string): string {
@@ -123,7 +136,6 @@ export function dedupeItinerariesByShape(
 
 function buildDbOnlyPlans(
   dbRoutes: TransitRouteRecord[],
-  anchorPolyline: LatLng[],
   limit: number
 ): DisplayRoutePlan[] {
   const ranked = [...dbRoutes].sort((a, b) => {
@@ -135,6 +147,7 @@ function buildDbOnlyPlans(
   const plans: DisplayRoutePlan[] = [];
   for (const db of ranked) {
     if (plans.length >= limit) break;
+    if (!db.geometry || db.geometry.length < 2) continue;
     const etaMin = db.eta_minutes != null ? Number(db.eta_minutes) : null;
     plans.push({
       id: `db:${db.route_id}:${plans.length}`,
@@ -156,7 +169,7 @@ function buildDbOnlyPlans(
       fareValue: null,
       generalizedCost: db.generalized_cost_minutes ?? null,
       transferCount: db.transfer_count ?? null,
-      polyline: anchorPolyline,
+      polyline: db.geometry,
       fromGoogle: false,
       dbRouteId: db.route_id,
     });
@@ -165,7 +178,11 @@ function buildDbOnlyPlans(
 }
 
 /**
- * Build up to `limit` options: Google transit shapes first, matched to diverse GTFS rows.
+ * Build up to `limit` options from routes that have drawable geometry.
+ *
+ * GTFS rows are useful for matching names, fares, and timing, but they do not
+ * include a path in this client. They must not become separate map options by
+ * reusing another route's polyline.
  */
 export function composeTransitPlanOptions(args: {
   itineraries: TransitItinerary[];
@@ -179,11 +196,7 @@ export function composeTransitPlanOptions(args: {
   deduped.sort((a, b) => a.durationSeconds - b.durationSeconds);
 
   if (!deduped.length && args.dbRoutes.length) {
-    const poly =
-      args.fallbackPolyline && args.fallbackPolyline.length > 1
-        ? args.fallbackPolyline
-        : [];
-    return buildDbOnlyPlans(args.dbRoutes, poly, limit);
+    return buildDbOnlyPlans(args.dbRoutes, limit);
   }
 
   const usedDbKeys = new Set<string>();
@@ -253,56 +266,6 @@ export function composeTransitPlanOptions(args: {
       dbRouteId: db?.route_id,
     });
   }
-
-  const fillFromDbOnly = (): void => {
-    const ranked = [...args.dbRoutes]
-      .filter((r) => !usedDbKeys.has(r.route_id))
-      .sort((a, b) => {
-        const ca =
-          a.generalized_cost_minutes ?? Number(a.eta_minutes ?? 99999);
-        const cb =
-          b.generalized_cost_minutes ?? Number(b.eta_minutes ?? 99999);
-        return ca - cb;
-      });
-
-    let anchor = deduped[0]?.coordinates;
-    if (!anchor?.length && plans[0]?.polyline?.length) {
-      anchor = plans[0].polyline;
-    }
-    if (!anchor?.length) return;
-
-    for (const db of ranked) {
-      if (plans.length >= limit) break;
-      usedDbKeys.add(db.route_id);
-      const etaMin = db.eta_minutes != null ? Number(db.eta_minutes) : null;
-      plans.push({
-        id: `db:${db.route_id}:${plans.length}`,
-        routeName: db.route_long_name ?? "Route",
-        transfersText:
-          db.transfer_count != null ? `${db.transfer_count}` : "—",
-        estimatedText:
-          etaMin != null && Number.isFinite(etaMin)
-            ? `${Math.round(etaMin)} min`
-            : "—",
-        fareText: "—",
-        scoreText:
-          db.generalized_cost_minutes != null
-            ? `${db.generalized_cost_minutes.toFixed(2)}`
-            : undefined,
-        boardStop: db.nearest_origin_stop?.trim() || "—",
-        offStop: db.nearest_destination_stop?.trim() || "—",
-        etaMinutes: etaMin,
-        fareValue: null,
-        generalizedCost: db.generalized_cost_minutes ?? null,
-        transferCount: db.transfer_count ?? null,
-        polyline: anchor,
-        fromGoogle: false,
-        dbRouteId: db.route_id,
-      });
-    }
-  };
-
-  fillFromDbOnly();
 
   return plans.slice(0, limit);
 }

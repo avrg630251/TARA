@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { LatLng } from "@/lib/googleMapsRoutes";
+import type { DisplayRouteSegment } from "@/lib/transitPlanOptions";
 import { loadGoogleMapsApi } from "@/lib/googleMapsWebLoader";
 
 export type RouteAlternativePolyline = {
@@ -9,16 +10,20 @@ export type RouteAlternativePolyline = {
   selected: boolean;
 };
 
+export type RouteSegmentPolyline = DisplayRouteSegment;
+
 type FullScreenMapProps = {
   latitude: number;
   longitude: number;
   polylineCoordinates?: LatLng[];
   routeAlternatives?: RouteAlternativePolyline[];
+  routeSegments?: RouteSegmentPolyline[];
   destinationCoordinate?: LatLng | null;
-  destinationRadiusMeters?: number;
   fitSignal?: number;
   navigationMode?: boolean;
   trackedCoordinate?: { latitude: number; longitude: number } | null;
+  selectedSegmentId?: string | null;
+  onSegmentPress?: (segment: DisplayRouteSegment) => void;
   fitEdgePadding?: {
     top: number;
     right: number;
@@ -27,8 +32,8 @@ type FullScreenMapProps = {
   };
 };
 
-const PRIMARY_LINE = "#1B4332";
-const ALT_LINE = "rgba(100,116,139,0.45)";
+const PRIMARY_LINE = "#0B3D2E";
+const ALT_LINE = "rgba(51,65,85,0.72)";
 const NAV_ZOOM = 16;
 
 function toBounds(g: any, coords: LatLng[]) {
@@ -57,27 +62,31 @@ export function FullScreenMap({
   longitude,
   polylineCoordinates,
   routeAlternatives,
+  routeSegments,
   destinationCoordinate,
-  destinationRadiusMeters,
   fitSignal,
   navigationMode = false,
   trackedCoordinate,
+  selectedSegmentId,
+  onSegmentPress,
 }: FullScreenMapProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const polylinesRef = useRef<any[]>([]);
   const markersRef = useRef<any[]>([]);
-  const circleRef = useRef<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fitCoords = useMemo(
     () =>
-      collectCoordinates(
+      [
+        ...(routeSegments?.flatMap((segment) => segment.coordinates) ?? []),
+        ...collectCoordinates(
         polylineCoordinates,
         routeAlternatives,
         destinationCoordinate ?? null
-      ),
-    [polylineCoordinates, routeAlternatives, destinationCoordinate]
+        ),
+      ],
+    [polylineCoordinates, routeAlternatives, routeSegments, destinationCoordinate]
   );
 
   useEffect(() => {
@@ -117,14 +126,55 @@ export function FullScreenMap({
     polylinesRef.current = [];
     for (const m of markersRef.current) m.setMap(null);
     markersRef.current = [];
-    if (circleRef.current) {
-      circleRef.current.setMap(null);
-      circleRef.current = null;
-    }
-
     const hasAlts =
       routeAlternatives && routeAlternatives.some((r) => r.coordinates.length > 1);
-    if (hasAlts) {
+    const segmentColor = (
+      segment: RouteSegmentPolyline,
+      index: number
+    ) => {
+      if (segment.segmentType === "walk") return "#495057";
+      const colors = ["#0B3D2E", "#0B4F8A", "#7A1FA2", "#B54708", "#8A1538"];
+      return colors[index % colors.length];
+    };
+    if (routeSegments?.length) {
+      for (const [index, segment] of routeSegments.entries()) {
+        if (segment.coordinates.length < 2) continue;
+        const polyline = new g.maps.Polyline({
+          map,
+          path: segment.coordinates.map((c: LatLng) => ({
+            lat: c.latitude,
+            lng: c.longitude,
+          })),
+          strokeColor:
+            selectedSegmentId === segment.segmentId
+              ? "#FFD43B"
+              : segmentColor(segment, index),
+          strokeOpacity: 1,
+          strokeWeight:
+            selectedSegmentId === segment.segmentId
+              ? 10
+              : navigationMode
+                ? 7
+                : 6,
+          icons:
+            segment.segmentType === "walk"
+              ? [
+                  {
+                    icon: {
+                      path: "M 0,-1 0,1",
+                      strokeOpacity: 1,
+                      scale: 3,
+                    },
+                    offset: "0",
+                    repeat: "12px",
+                  },
+                ]
+              : undefined,
+        });
+        polyline.addListener("click", () => onSegmentPress?.(segment));
+        polylinesRef.current.push(polyline);
+      }
+    } else if (hasAlts) {
       for (const alt of routeAlternatives ?? []) {
         if (alt.coordinates.length < 2) continue;
         const polyline = new g.maps.Polyline({
@@ -135,7 +185,7 @@ export function FullScreenMap({
           })),
           strokeColor: alt.selected ? PRIMARY_LINE : ALT_LINE,
           strokeOpacity: 1,
-          strokeWeight: alt.selected ? 6 : 3,
+          strokeWeight: alt.selected ? 7 : 4,
         });
         polylinesRef.current.push(polyline);
       }
@@ -145,27 +195,12 @@ export function FullScreenMap({
         path: polylineCoordinates.map((c) => ({ lat: c.latitude, lng: c.longitude })),
         strokeColor: PRIMARY_LINE,
         strokeOpacity: 1,
-        strokeWeight: navigationMode ? 5 : 4,
+        strokeWeight: navigationMode ? 7 : 6,
       });
       polylinesRef.current.push(polyline);
     }
 
     if (destinationCoordinate) {
-      if (destinationRadiusMeters && destinationRadiusMeters > 0 && !navigationMode) {
-        circleRef.current = new g.maps.Circle({
-          map,
-          center: {
-            lat: destinationCoordinate.latitude,
-            lng: destinationCoordinate.longitude,
-          },
-          radius: destinationRadiusMeters,
-          fillColor: "rgba(27,67,50,0.14)",
-          fillOpacity: 1,
-          strokeColor: "rgba(27,67,50,0.6)",
-          strokeOpacity: 1,
-          strokeWeight: 2,
-        });
-      }
       const destinationMarker = new g.maps.Marker({
         map,
         position: {
@@ -177,7 +212,10 @@ export function FullScreenMap({
       markersRef.current.push(destinationMarker);
     }
 
-    const activeTracked = navigationMode ? trackedCoordinate : null;
+    const activeTracked = trackedCoordinate ?? {
+      latitude,
+      longitude,
+    };
     if (
       activeTracked &&
       Number.isFinite(activeTracked.latitude) &&
@@ -204,8 +242,8 @@ export function FullScreenMap({
     longitude,
     polylineCoordinates,
     routeAlternatives,
+    routeSegments,
     destinationCoordinate,
-    destinationRadiusMeters,
     fitCoords,
     navigationMode,
     trackedCoordinate?.latitude,

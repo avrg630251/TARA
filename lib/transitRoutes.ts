@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
+import type { LatLng } from "@/lib/googleMapsRoutes";
 
-export type DiscountCode = "regular" | "student" | "pwd" | "senior";
+export type DiscountCode = "regular" | "discounted";
 
 export type TransitRouteRecord = {
   route_id: string;
@@ -16,6 +17,8 @@ export type TransitRouteRecord = {
   transfer_count?: number | null;
   eta_minutes?: number | null;
   generalized_cost_minutes?: number | null;
+  shape_id?: string | null;
+  geometry?: LatLng[] | null;
 };
 
 export async function fetchGtfsRoutesBetweenPoints(args: {
@@ -59,6 +62,28 @@ export async function fetchGtfsRoutesByShape(args: {
   return (data ?? []) as TransitRouteRecord[];
 }
 
+export async function fetchGtfsRoutesWithGeometry(args: {
+  originLat: number;
+  originLng: number;
+  destinationLat: number;
+  destinationLng: number;
+  shapeRadiusMeters: number;
+}): Promise<TransitRouteRecord[]> {
+  const { data, error } = await supabase.rpc(
+    "find_routes_near_points_with_geometry",
+    {
+      p_origin_lat: args.originLat,
+      p_origin_lng: args.originLng,
+      p_dest_lat: args.destinationLat,
+      p_dest_lng: args.destinationLng,
+      p_shape_radius_m: args.shapeRadiusMeters,
+    }
+  );
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as TransitRouteRecord[];
+}
+
 export type FareQuote = {
   routeId: string;
   originalFare: number;
@@ -68,14 +93,14 @@ export type FareQuote = {
 };
 
 const REGULAR_PER_LEG_PHP = 13;
-const DISCOUNT_PER_LEG_PHP = 11;
+const DISCOUNT_RATE = 0.2;
 
 function isDiscountPassenger(code: DiscountCode): boolean {
-  return code === "student" || code === "pwd" || code === "senior";
+  return code === "discounted";
 }
 
 /**
- * Flat fare: ₱13 per vehicle leg (regular) or ₱11 per leg (student / pwd / senior).
+ * A discounted passenger pays 20% less than the regular fare.
  * A direct trip has 1 leg; each transfer adds one leg (= transfer_count + 1).
  */
 export function computeFlatFareForTrip(args: {
@@ -86,7 +111,7 @@ export function computeFlatFareForTrip(args: {
 }): FareQuote {
   const vehicleLegs = Math.max(1, (args.transferCount ?? 0) + 1);
   const regularTotal = REGULAR_PER_LEG_PHP * vehicleLegs;
-  const discountedTotal = DISCOUNT_PER_LEG_PHP * vehicleLegs;
+  const discountedTotal = regularTotal * (1 - DISCOUNT_RATE);
 
   const useDiscount = isDiscountPassenger(args.discountCode);
   const finalFare = useDiscount ? discountedTotal : regularTotal;
@@ -100,4 +125,3 @@ export function computeFlatFareForTrip(args: {
     currency: "PHP",
   };
 }
-

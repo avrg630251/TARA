@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Platform, StyleSheet } from "react-native";
 import MapView, {
-  Circle,
   Marker,
   Polyline,
   PROVIDER_GOOGLE,
@@ -9,12 +8,15 @@ import MapView, {
 } from "react-native-maps";
 
 import type { LatLng } from "@/lib/googleMapsRoutes";
+import type { DisplayRouteSegment } from "@/lib/transitPlanOptions";
 
 export type RouteAlternativePolyline = {
   coordinates: LatLng[];
   /** Highlighted alternative (typically user-selected chip). */
   selected: boolean;
 };
+
+export type RouteSegmentPolyline = DisplayRouteSegment;
 
 type FullScreenMapProps = {
   latitude: number;
@@ -23,14 +25,16 @@ type FullScreenMapProps = {
   polylineCoordinates?: LatLng[];
   /** Multiple paths — Google Maps-style alternates on one map. */
   routeAlternatives?: RouteAlternativePolyline[];
+  routeSegments?: RouteSegmentPolyline[];
   destinationCoordinate?: LatLng | null;
-  destinationRadiusMeters?: number;
   /** Bump to refit bounds (same coordinates, new selection). */
   fitSignal?: number;
   /** Live navigation: follow device position; disables route-wide fit. */
   navigationMode?: boolean;
   /** Latest fix while navigating (centers / animates map). */
   trackedCoordinate?: { latitude: number; longitude: number } | null;
+  selectedSegmentId?: string | null;
+  onSegmentPress?: (segment: DisplayRouteSegment) => void;
   /** Padding when fitting the route (accounts for overlays). */
   fitEdgePadding?: {
     top: number;
@@ -50,8 +54,8 @@ const DEFAULT_PADDING = {
   left: 32,
 };
 
-const PRIMARY_LINE = "#1B4332";
-const ALT_LINE = "rgba(100,116,139,0.42)";
+const PRIMARY_LINE = "#0B3D2E";
+const ALT_LINE = "rgba(51,65,85,0.72)";
 
 function collectCoordinates(
   legacy: LatLng[] | undefined,
@@ -75,11 +79,13 @@ export function FullScreenMap({
   longitude,
   polylineCoordinates,
   routeAlternatives,
+  routeSegments,
   destinationCoordinate,
-  destinationRadiusMeters,
   fitSignal,
   navigationMode = false,
   trackedCoordinate,
+  selectedSegmentId,
+  onSegmentPress,
   fitEdgePadding = DEFAULT_PADDING,
 }: FullScreenMapProps) {
   const mapRef = useRef<MapView>(null);
@@ -94,14 +100,18 @@ export function FullScreenMap({
 
   const fitCoords = useMemo(
     () =>
-      collectCoordinates(
+      [
+        ...(routeSegments?.flatMap((segment) => segment.coordinates) ?? []),
+        ...collectCoordinates(
         polylineCoordinates,
         routeAlternatives,
         destinationCoordinate ?? null
-      ),
+        ),
+      ],
     [
       polylineCoordinates,
       routeAlternatives,
+      routeSegments,
       destinationCoordinate,
       fitSignal,
     ]
@@ -157,6 +167,15 @@ export function FullScreenMap({
     routeAlternatives &&
     routeAlternatives.some((a) => a.coordinates.length > 1);
 
+  const segmentColor = (
+    segment: RouteSegmentPolyline,
+    index: number
+  ) => {
+    if (segment.segmentType === "walk") return "#495057";
+    const colors = ["#0B3D2E", "#0B4F8A", "#7A1FA2", "#B54708", "#8A1538"];
+    return colors[index % colors.length];
+  };
+
   return (
     <MapView
       ref={mapRef}
@@ -171,14 +190,40 @@ export function FullScreenMap({
       rotateEnabled
       pitchEnabled={false}
     >
-      {multi
+      {routeSegments?.length
+        ?         routeSegments.map((segment, index) =>
+            segment.coordinates.length > 1 ? (
+              <Polyline
+                key={segment.segmentId}
+                coordinates={segment.coordinates}
+                strokeColor={
+                  selectedSegmentId === segment.segmentId
+                    ? "#FFD43B"
+                    : segmentColor(segment, index)
+                }
+                strokeWidth={
+                  selectedSegmentId === segment.segmentId
+                    ? 10
+                    : navigationMode
+                      ? 7
+                      : 6
+                }
+                lineDashPattern={segment.segmentType === "walk" ? [8, 6] : undefined}
+                lineCap="round"
+                lineJoin="round"
+                tappable
+                onPress={() => onSegmentPress?.(segment)}
+              />
+            ) : null
+          )
+        : multi
         ? routeAlternatives!.map((alt, idx) =>
             alt.coordinates.length > 1 ? (
               <Polyline
                 key={`alt-${idx}`}
                 coordinates={alt.coordinates}
                 strokeColor={alt.selected ? PRIMARY_LINE : ALT_LINE}
-                strokeWidth={alt.selected ? 6 : 3}
+                strokeWidth={alt.selected ? 7 : 4}
                 lineCap="round"
                 lineJoin="round"
               />
@@ -188,24 +233,13 @@ export function FullScreenMap({
             <Polyline
               coordinates={polylineCoordinates}
               strokeColor={PRIMARY_LINE}
-              strokeWidth={navigationMode ? 5 : 4}
+              strokeWidth={navigationMode ? 7 : 6}
               lineCap="round"
               lineJoin="round"
             />
           ) : null}
       {destinationCoordinate ? (
         <>
-          {destinationRadiusMeters &&
-          destinationRadiusMeters > 0 &&
-          !navigationMode ? (
-            <Circle
-              center={destinationCoordinate}
-              radius={destinationRadiusMeters}
-              fillColor="rgba(27, 67, 50, 0.14)"
-              strokeColor="rgba(27, 67, 50, 0.6)"
-              strokeWidth={2}
-            />
-          ) : null}
           <Marker
             coordinate={destinationCoordinate}
             title="Destination"

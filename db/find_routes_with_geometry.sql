@@ -56,7 +56,7 @@ as $$
     from matched_shapes ms
     cross join lateral st_dumppoints(
       ms.route_geog::geometry
-    ) as points(geom, path)
+    ) as points(path, geom)
     group by
       ms.route_id,
       ms.shape_id,

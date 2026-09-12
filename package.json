@@ -9,7 +9,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:web": "expo export --platform web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "import:custom-routes": "node scripts/import-custom-routes.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -19,6 +20,7 @@
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
     "@supabase/supabase-js": "^2.101.1",
+    "dotenv": "^17.4.2",
     "expo": "~54.0.37",
     "expo-constants": "~18.0.14",
     "expo-file-system": "~19.0.24",
@@ -52,6 +54,7 @@
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "supabase": "^2.117.0",
     "typescript": "~5.9.2"
   },
   "private": true

@@ -21,6 +21,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { FullScreenMap } from "@/components/FullScreenMap";
 import { useTravel } from "@/contexts/TravelContext";
+import * as googleMapsRoutes from "@/lib/googleMapsRoutes";
 import {
   fetchTransitItinerariesFromGoogle,
   geocodeAddress,
@@ -36,13 +37,16 @@ import {
 } from "@/lib/classSchedules";
 import {
   composeTransitPlanOptions,
+  type DisplayRouteSegment,
   type DisplayRoutePlan,
 } from "@/lib/transitPlanOptions";
+import { fetchNearestCustomItinerary } from "@/lib/customRouteItineraries";
 import { type RouteFilter } from "@/lib/mockTransitRoutes";
 import {
   computeFlatFareForTrip,
   fetchGtfsRoutesBetweenPoints,
   fetchGtfsRoutesByShape,
+  fetchGtfsRoutesWithGeometry,
   type DiscountCode,
   type TransitRouteRecord,
 } from "@/lib/transitRoutes";
@@ -50,7 +54,11 @@ import {
 const GREEN = "#1B4332";
 const FALLBACK_LAT = 14.5995;
 const FALLBACK_LNG = 120.9842;
-const DEFAULT_RADIUS_METERS = 1000;
+const DLSAU_DESTINATION = "De La Salle Araneta University";
+const DLSAU_COORDINATE: LatLng = {
+  latitude: 14.670567,
+  longitude: 120.999293,
+};
 const DB_MATCH_POOL_LIMIT = 20;
 type ActiveInput = "origin" | "destination" | null;
 
@@ -85,6 +93,43 @@ function formatCurrency(amount: number, currency: string) {
   return `${currency} ${amount.toFixed(2)}`;
 }
 
+function coordinateDistance(a: LatLng, b: LatLng): number {
+  const dLat = a.latitude - b.latitude;
+  const dLng = a.longitude - b.longitude;
+  return dLat * dLat + dLng * dLng;
+}
+
+function routeSegmentsForLocation(
+  segments: DisplayRouteSegment[],
+  location: LatLng
+): DisplayRouteSegment[] {
+  let closestSegment = -1;
+  let closestCoordinate = -1;
+  let closestDistance = Number.POSITIVE_INFINITY;
+
+  segments.forEach((segment, segmentIndex) => {
+    if (segment.segmentType === "walk" && segmentIndex === 0) return;
+    segment.coordinates.forEach((coordinate, coordinateIndex) => {
+      const distance = coordinateDistance(location, coordinate);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestSegment = segmentIndex;
+        closestCoordinate = coordinateIndex;
+      }
+    });
+  });
+
+  if (closestSegment < 0 || closestCoordinate < 0) return segments;
+
+  return segments.slice(closestSegment).map((segment, index) => ({
+    ...segment,
+    coordinates:
+      index === 0
+        ? segment.coordinates.slice(closestCoordinate)
+        : segment.coordinates,
+  }));
+}
+
 function pickSearchParam(value: string | string[] | undefined): string | undefined {
   if (typeof value === "string") return value;
   if (Array.isArray(value) && typeof value[0] === "string") return value[0];
@@ -110,27 +155,20 @@ export default function SearchMapScreen() {
   const sheetOffsetRef = useRef(maxSheetTranslateY);
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [originLabel, setOriginLabel] = useState("Your location");
-  const [destination, setDestination] = useState("De La Salle Araneta University");
+  const [destination] = useState(DLSAU_DESTINATION);
   const [activeInput, setActiveInput] = useState<ActiveInput>(null);
   const [originSuggestions, setOriginSuggestions] = useState<PlaceSuggestion[]>([]);
-  const [destinationSuggestions, setDestinationSuggestions] = useState<
-    PlaceSuggestion[]
-  >([]);
   const [originSuggestLoading, setOriginSuggestLoading] = useState(false);
-  const [destinationSuggestLoading, setDestinationSuggestLoading] = useState(false);
   const [originSuggestError, setOriginSuggestError] = useState<string | null>(null);
-  const [destinationSuggestError, setDestinationSuggestError] = useState<string | null>(
-    null
-  );
   const [filter, setFilter] = useState<RouteFilter>("all");
   const [latitude, setLatitude] = useState(FALLBACK_LAT);
   const [longitude, setLongitude] = useState(FALLBACK_LNG);
+  const [locationReady, setLocationReady] = useState(false);
   const [routePlans, setRoutePlans] = useState<DisplayRoutePlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [fitMapSignal, setFitMapSignal] = useState(0);
   const [destinationCoord, setDestinationCoord] = useState<LatLng | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
-  const [radiusMeters, setRadiusMeters] = useState(DEFAULT_RADIUS_METERS);
   const [discountCode, setDiscountCode] = useState<DiscountCode>("regular");
   const [routeLoading, setRouteLoading] = useState(false);
   const [hasRouteSearch, setHasRouteSearch] = useState(false);
@@ -140,7 +178,14 @@ export default function SearchMapScreen() {
   );
   const [navLatitude, setNavLatitude] = useState(latitude);
   const [navLongitude, setNavLongitude] = useState(longitude);
+  const [accessPath, setAccessPath] = useState<LatLng[] | null>(null);
+  const [selectedSegment, setSelectedSegment] =
+    useState<DisplayRouteSegment | null>(null);
   const tripWatchRef = useRef<(() => void) | null>(null);
+  const accessRequestRef = useRef<{
+    planId: string;
+    coordinate: LatLng;
+  } | null>(null);
 
   const stopTripWatch = useCallback(() => {
     if (!tripWatchRef.current) return;
@@ -158,7 +203,6 @@ export default function SearchMapScreen() {
     const orig = pickSearchParam(params.origin);
     if (!dest && !orig) return;
     if (orig) setOriginLabel(orig);
-    if (dest) setDestination(dest);
     router.setParams({ origin: undefined, destination: undefined });
 
     const hasDefinedRoute = Boolean(orig || dest);
@@ -251,6 +295,7 @@ export default function SearchMapScreen() {
     setSelectedPlanId(null);
     setDestinationCoord(null);
     setRouteError(null);
+    setSelectedSegment(null);
   }, [stopTripWatch]);
 
   useEffect(() => {
@@ -291,55 +336,30 @@ export default function SearchMapScreen() {
     };
   }, [activeInput, originLabel, latitude, longitude]);
 
-  useEffect(() => {
-    if (activeInput !== "destination") return;
-    if (destination.trim().length < 2) {
-      setDestinationSuggestions([]);
-      setDestinationSuggestError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setDestinationSuggestLoading(true);
-    const timer = setTimeout(async () => {
-      try {
-        const list = await getPlaceSuggestions(destination, {
-          limit: 3,
-          locationBias: { lat: latitude, lng: longitude },
-        });
-        if (!cancelled) {
-          setDestinationSuggestions(list);
-          setDestinationSuggestError(null);
-        }
-      } catch (e: unknown) {
-        if (!cancelled) {
-          setDestinationSuggestions([]);
-          setDestinationSuggestError(
-            e instanceof Error ? e.message : "Could not load suggestions."
-          );
-        }
-      } finally {
-        if (!cancelled) setDestinationSuggestLoading(false);
-      }
-    }, 280);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [activeInput, destination, latitude, longitude]);
-
   const routes = useMemo<DisplayRoutePlan[]>(() => {
     const withFares = routePlans.map((p) => {
-      const fare = computeFlatFareForTrip({
-        transferCount: p.transferCount,
-        discountCode,
-        logicalRouteKey: p.dbRouteId ?? p.id,
-      });
+      const fare =
+        p.segments
+          ? p.customFareValue != null
+          ? {
+              finalFare:
+                discountCode === "discounted"
+                  ? p.customFareValue * 0.8
+                  : p.customFareValue,
+              currency: "PHP",
+            }
+          : null
+          : computeFlatFareForTrip({
+              transferCount: p.transferCount,
+              discountCode,
+              logicalRouteKey: p.dbRouteId ?? p.id,
+            });
       return {
         ...p,
-        fareText: formatCurrency(fare.finalFare, fare.currency),
-        fareValue: fare.finalFare,
+        fareText: fare
+          ? formatCurrency(fare.finalFare, fare.currency)
+          : "Fare unavailable",
+        fareValue: fare?.finalFare ?? null,
       };
     });
 
@@ -385,6 +405,114 @@ export default function SearchMapScreen() {
       selected: primaryId != null ? r.id === primaryId : false,
     }));
   }, [routes, selectedPlanId]);
+
+  const selectedMapPlan = useMemo(
+    () => routes.find((route) => route.id === selectedPlanId) ?? routes[0],
+    [routes, selectedPlanId]
+  );
+
+  const mapRouteSegments = useMemo(() => {
+    const plan = selectedMapPlan;
+    if (!plan?.segments?.length) return undefined;
+    const currentLocation = tripActivePlan
+      ? { latitude: navLatitude, longitude: navLongitude }
+      : { latitude, longitude };
+    const accessSegment: DisplayRouteSegment | null =
+      plan.boardingCoordinate && accessPath?.length
+      ? {
+          segmentId: "dynamic-access-walk",
+          segmentType: "walk",
+          coordinates: accessPath,
+          label: "Walk to boarding point",
+        }
+      : null;
+    const routeSegments = tripActivePlan
+      ? routeSegmentsForLocation(plan.segments, currentLocation)
+      : plan.segments;
+    return accessSegment
+      ? [accessSegment, ...routeSegments]
+      : routeSegments;
+  }, [
+    selectedMapPlan,
+    tripActivePlan,
+    navLatitude,
+    navLongitude,
+    latitude,
+    longitude,
+    accessPath,
+  ]);
+
+  useEffect(() => {
+    const plan = selectedMapPlan;
+    if (!plan?.boardingCoordinate) {
+      setAccessPath(null);
+      return;
+    }
+
+    const currentLocation = tripActivePlan
+      ? { latitude: navLatitude, longitude: navLongitude }
+      : { latitude, longitude };
+    const directPath = [currentLocation, plan.boardingCoordinate];
+    const previousRequest = accessRequestRef.current;
+    if (previousRequest?.planId !== plan.id) {
+      setAccessPath(null);
+    }
+    if (
+      previousRequest?.planId === plan.id &&
+      haversineMeters(
+        { lat: previousRequest.coordinate.latitude, lng: previousRequest.coordinate.longitude },
+        { lat: currentLocation.latitude, lng: currentLocation.longitude }
+      ) < 25
+    ) {
+      return;
+    }
+    accessRequestRef.current = { planId: plan.id, coordinate: currentLocation };
+
+    let cancelled = false;
+    const requestPlanId = plan.id;
+    const timer = setTimeout(() => {
+      if (typeof googleMapsRoutes.getWalkingRouteBetween !== "function") {
+        setAccessPath(directPath);
+        return;
+      }
+      void googleMapsRoutes.getWalkingRouteBetween(
+        { lat: currentLocation.latitude, lng: currentLocation.longitude },
+        {
+          lat: plan.boardingCoordinate!.latitude,
+          lng: plan.boardingCoordinate!.longitude,
+        }
+      )
+        .then((coordinates) => {
+          if (
+            !cancelled &&
+            accessRequestRef.current?.planId === requestPlanId &&
+            coordinates.length > 1
+          ) {
+            setAccessPath(coordinates);
+          }
+        })
+        .catch(() => {
+          if (
+            !cancelled &&
+            accessRequestRef.current?.planId === requestPlanId
+          ) {
+            setAccessPath(directPath);
+          }
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    selectedMapPlan,
+    tripActivePlan,
+    navLatitude,
+    navLongitude,
+    latitude,
+    longitude,
+  ]);
 
   const distanceToDestinationMeters = useMemo(() => {
     if (!tripActivePlan || !destinationCoord) return null;
@@ -511,11 +639,12 @@ export default function SearchMapScreen() {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (cancelled || status !== "granted") return;
         const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
+          accuracy: Location.Accuracy.High,
         });
         if (!cancelled) {
           setLatitude(pos.coords.latitude);
           setLongitude(pos.coords.longitude);
+          setLocationReady(true);
         }
       } catch {
         /* keep fallback */
@@ -526,31 +655,10 @@ export default function SearchMapScreen() {
     };
   }, []);
 
-  function swapEndpoints() {
-    clearRoute();
-    setOriginSuggestions([]);
-    setDestinationSuggestions([]);
-    setOriginSuggestError(null);
-    setDestinationSuggestError(null);
-    const nextDest = destination;
-    const nextOrigin = originLabel;
-    const isDefaultOrigin = isDefaultOriginLabel(nextOrigin);
-    setDestination(isDefaultOrigin ? "" : nextOrigin);
-    setOriginLabel(nextDest.trim() === "" ? "Your location" : nextDest);
-  }
-
   function chooseOriginSuggestion(item: PlaceSuggestion) {
     setOriginLabel(item.description);
     setOriginSuggestions([]);
     setOriginSuggestError(null);
-    setActiveInput(null);
-    clearRoute();
-  }
-
-  function chooseDestinationSuggestion(item: PlaceSuggestion) {
-    setDestination(item.description);
-    setDestinationSuggestions([]);
-    setDestinationSuggestError(null);
     setActiveInput(null);
     clearRoute();
   }
@@ -561,23 +669,128 @@ export default function SearchMapScreen() {
     setRouteError(null);
     setActiveInput(null);
     setOriginSuggestions([]);
-    setDestinationSuggestions([]);
     setOriginSuggestError(null);
-    setDestinationSuggestError(null);
     setRoutePlans([]);
     setSelectedPlanId(null);
     try {
-      const destQuery = destination.trim();
-      if (!destQuery) {
-        throw new Error("Enter a destination (address or place name).");
+        const useGpsOrigin = isDefaultOriginLabel(originLabel);
+        let originGeo: { lat: number; lng: number };
+        if (useGpsOrigin) {
+          try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== "granted") {
+              throw new Error("Location permission is required for Your location.");
+            }
+            const pos = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.High,
+            });
+            originGeo = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            };
+            setLatitude(originGeo.lat);
+            setLongitude(originGeo.lng);
+            setLocationReady(true);
+          } catch (locationError) {
+            if (!locationReady) throw locationError;
+            originGeo = { lat: latitude, lng: longitude };
+          }
+        } else {
+          originGeo = await geocodeAddress(originLabel);
+        }
+
+      const customDestination = await fetchNearestCustomItinerary({
+        latitude: originGeo.lat,
+        longitude: originGeo.lng,
+      }).catch(() => null);
+
+      if (customDestination) {
+      const segmentDetails = await Promise.all(
+        customDestination.segments.map(async (segment) => {
+          const first = segment.coordinates[0];
+          const last = segment.coordinates[segment.coordinates.length - 1];
+          if (!first || !last) {
+            return { fare: segment.fare, durationMinutes: null };
+          }
+          try {
+            const seconds = await googleMapsRoutes.getTravelDurationSeconds(
+              { lat: first[1], lng: first[0] },
+              { lat: last[1], lng: last[0] },
+              segment.segment_type === "walk" ? "walking" : "driving"
+            );
+            return {
+              fare: segment.fare,
+              durationMinutes: Math.max(1, Math.ceil(seconds / 60)),
+            };
+          } catch {
+            return { fare: segment.fare, durationMinutes: null };
+          }
+        })
+      );
+      const totalDurationMinutes = segmentDetails.reduce(
+        (total, segment) => total + (segment.durationMinutes ?? 0),
+        0
+      );
+      const customPlan: DisplayRoutePlan = {
+          id: `custom:${customDestination.segments[0].itinerary_id}`,
+          routeName:
+            customDestination.segments[0].itinerary_name ||
+            "Custom DLSAU itinerary",
+          transfersText: `${Math.max(
+            0,
+            customDestination.segments.filter(
+              (segment) => segment.segment_type !== "walk"
+            ).length - 1
+          )}`,
+          estimatedText:
+            totalDurationMinutes > 0
+              ? `${totalDurationMinutes} min`
+              : "Time unavailable",
+          fareText: "—",
+          boardStop: customDestination.boardingName,
+          offStop: customDestination.destination.name,
+          etaMinutes: null,
+          fareValue: customDestination.fare,
+          customFareValue: customDestination.fare,
+          boardingCoordinate: customDestination.boardingCoordinate,
+          segments: customDestination.segments.map(
+            (segment, index): DisplayRouteSegment => ({
+              segmentId: segment.segment_id,
+              segmentType: segment.segment_type,
+              label: segment.segment_name,
+              routeId: segment.route_id,
+              fare: segmentDetails[index]?.fare,
+              durationMinutes: segmentDetails[index]?.durationMinutes,
+              coordinates: segment.coordinates.map(([longitude, latitude]) => ({
+                latitude: Number(latitude),
+                longitude: Number(longitude),
+              })),
+            })
+          ),
+          generalizedCost: null,
+          transferCount: Math.max(
+            0,
+            customDestination.segments.filter(
+              (segment) => segment.segment_type !== "walk"
+            ).length - 1
+          ),
+          polyline: customDestination.coordinates,
+          fromGoogle: false,
+        };
+        setDestinationCoord({
+          latitude: customDestination.destination.latitude,
+          longitude: customDestination.destination.longitude,
+        });
+        setRoutePlans([customPlan]);
+        setSelectedPlanId(customPlan.id);
+        setFitMapSignal((n) => n + 1);
+        return;
       }
 
-      const useGpsOrigin = isDefaultOriginLabel(originLabel);
-      const originGeo = useGpsOrigin
-        ? { lat: latitude, lng: longitude }
-        : await geocodeAddress(originLabel);
-
-      const destGeo = await geocodeAddress(destQuery);
+      const destGeo = {
+        lat: DLSAU_COORDINATE.latitude,
+        lng: DLSAU_COORDINATE.longitude,
+      };
       setDestinationCoord({
         latitude: destGeo.lat,
         longitude: destGeo.lng,
@@ -602,8 +815,6 @@ export default function SearchMapScreen() {
           summary: r.summary,
         };
       }
-
-      const userToDestinationMeters = haversineMeters(originGeo, destGeo);
 
       const finalizePlansAndBounds = async (pool: TransitRouteRecord[]) => {
         const rankedPool = [...pool]
@@ -656,11 +867,6 @@ export default function SearchMapScreen() {
         setFitMapSignal((n) => n + 1);
       };
 
-      if (userToDestinationMeters > radiusMeters) {
-        await finalizePlansAndBounds([]);
-        return;
-      }
-
       const directMatches = await fetchGtfsRoutesBetweenPoints({
         originLat: originGeo.lat,
         originLng: originGeo.lng,
@@ -675,21 +881,28 @@ export default function SearchMapScreen() {
         destinationLng: destGeo.lng,
         shapeRadiusMeters: 700,
       });
+      const geometryMatches = await fetchGtfsRoutesWithGeometry({
+        originLat: originGeo.lat,
+        originLng: originGeo.lng,
+        destinationLat: destGeo.lat,
+        destinationLng: destGeo.lng,
+        shapeRadiusMeters: 700,
+      });
 
-      const shapeRouteIds = new Set(shapeMatches.map((r) => r.route_id));
-      const overlapMatches = directMatches.filter((r) =>
-        shapeRouteIds.has(r.route_id)
+      const directByRouteId = new Map(
+        directMatches.map((route) => [route.route_id, route])
+      );
+      const shapeByRouteId = new Map(
+        shapeMatches.map((route) => [route.route_id, route])
       );
 
-      let fetched = overlapMatches;
-
-      if (fetched.length === 0) {
-        if (directMatches.length > 0) {
-          fetched = directMatches;
-        } else {
-          fetched = shapeMatches;
-        }
-      }
+      // Only pass routes with their own geometry to the plan builder. This
+      // prevents a metadata-only route from borrowing another route's line.
+      const fetched = geometryMatches.map((geometryRoute) => ({
+        ...shapeByRouteId.get(geometryRoute.route_id),
+        ...directByRouteId.get(geometryRoute.route_id),
+        ...geometryRoute,
+      }));
 
       await finalizePlansAndBounds(fetched);
     } catch (e: unknown) {
@@ -719,10 +932,10 @@ export default function SearchMapScreen() {
         routeAlternatives={
           tripActivePlan ? undefined : routeAlternativesForMap
         }
-        destinationCoordinate={destinationCoord}
-        destinationRadiusMeters={
-          tripActivePlan ? undefined : destinationCoord ? radiusMeters : undefined
+        routeSegments={
+          mapRouteSegments
         }
+        destinationCoordinate={destinationCoord}
         navigationMode={!!tripActivePlan}
         trackedCoordinate={
           tripActivePlan
@@ -731,7 +944,44 @@ export default function SearchMapScreen() {
         }
         fitEdgePadding={fitEdgePadding}
         fitSignal={tripActivePlan ? 0 : fitMapSignal}
+        selectedSegmentId={selectedSegment?.segmentId}
+        onSegmentPress={setSelectedSegment}
       />
+
+      {selectedSegment ? (
+        <View style={styles.segmentPopup}>
+          <Text style={styles.segmentPopupTitle}>
+            {selectedSegment.segmentType === "walk"
+              ? "Walking"
+              : `${selectedSegment.segmentType[0].toUpperCase()}${selectedSegment.segmentType.slice(1)} route`}
+          </Text>
+          <Text style={styles.segmentPopupLine}>
+            Type: {selectedSegment.segmentType}
+          </Text>
+          <Text style={styles.segmentPopupLine}>
+            Fare:{" "}
+            {selectedSegment.fare == null
+              ? selectedSegment.segmentType === "walk"
+                ? "Free"
+                : "Fare unavailable"
+              : formatCurrency(
+                  discountCode === "discounted"
+                    ? selectedSegment.fare * 0.8
+                    : selectedSegment.fare,
+                  "PHP"
+                )}
+          </Text>
+          <Text style={styles.segmentPopupLine}>
+            Time:{" "}
+            {selectedSegment.durationMinutes != null
+              ? `${selectedSegment.durationMinutes} min`
+              : "Calculating..."}
+          </Text>
+          <Pressable onPress={() => setSelectedSegment(null)}>
+            <Text style={styles.segmentPopupClose}>Close</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {tripActivePlan ? (
         <>
@@ -772,6 +1022,25 @@ export default function SearchMapScreen() {
                 <Text style={styles.tripHudStopLabel}>Get off: </Text>
                 {tripActivePlan.offStop}
               </Text>
+              {tripActivePlan.segments?.length ? (
+                <View style={styles.tripHudSegments}>
+                  <Text style={styles.tripHudSectionTitle}>Trip steps</Text>
+                  {tripActivePlan.segments.map((segment, index) => (
+                    <Text
+                      key={segment.segmentId}
+                      style={styles.tripHudSegment}
+                      numberOfLines={2}
+                    >
+                      {index + 1}.{" "}
+                      {segment.segmentType === "walk"
+                        ? segment.label ?? "Walk"
+                        : segment.label ??
+                          segment.routeId ??
+                          `${segment.segmentType[0].toUpperCase()}${segment.segmentType.slice(1)} ride`}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
               {distanceToDestinationMeters != null ? (
                 <Text style={styles.tripHudDistance}>
                   {distanceToDestinationMeters < 120
@@ -891,77 +1160,14 @@ export default function SearchMapScreen() {
                   <TextInput
                     style={styles.fieldInput}
                     value={destination}
-                    onFocus={() => setActiveInput("destination")}
-                    onBlur={() => {
-                      setTimeout(
-                        () =>
-                          setActiveInput((prev) =>
-                            prev === "destination" ? null : prev
-                          ),
-                        120
-                      );
-                    }}
-                    onChangeText={(t) => {
-                      setDestination(t);
-                      clearRoute();
-                    }}
-                    placeholder="Select destination"
+                    editable={false}
+                    accessibilityLabel="Fixed destination: De La Salle Araneta University"
+                    placeholder="De La Salle Araneta University"
                     placeholderTextColor="#868e96"
                   />
-                  {destinationSuggestLoading ? (
-                    <ActivityIndicator size="small" color={GREEN} />
-                  ) : null}
                 </View>
-                {activeInput === "destination" &&
-                destinationSuggestions.length > 0 ? (
-                  <View style={styles.suggestionsBox}>
-                    {destinationSuggestions.map((item) => (
-                      <Pressable
-                        key={item.placeId}
-                        style={({ pressed }) => [
-                          styles.suggestionItem,
-                          pressed && styles.pressed,
-                        ]}
-                        onPress={() => chooseDestinationSuggestion(item)}
-                      >
-                        <View style={styles.suggestionRow}>
-                          <View style={styles.suggestionIconCircle}>
-                            <Ionicons
-                              name="location-outline"
-                              size={14}
-                              color="#495057"
-                            />
-                          </View>
-                          <View style={styles.suggestionTexts}>
-                            <Text numberOfLines={1} style={styles.suggestionMain}>
-                              {item.mainText}
-                            </Text>
-                            {item.secondaryText ? (
-                              <Text numberOfLines={1} style={styles.suggestionSub}>
-                                {item.secondaryText}
-                              </Text>
-                            ) : null}
-                          </View>
-                        </View>
-                      </Pressable>
-                    ))}
-                  </View>
-                ) : null}
-                {activeInput === "destination" && destinationSuggestError ? (
-                  <Text style={styles.suggestErrorText}>
-                    {destinationSuggestError}
-                  </Text>
-                ) : null}
               </View>
             </View>
-            <Pressable
-              onPress={swapEndpoints}
-              style={({ pressed }) => [styles.swapBtn, pressed && styles.pressed]}
-              accessibilityRole="button"
-              accessibilityLabel="Swap start and destination"
-            >
-              <Ionicons name="swap-vertical" size={22} color={GREEN} />
-            </Pressable>
           </View>
 
           <Pressable
@@ -1028,41 +1234,12 @@ export default function SearchMapScreen() {
         >
           <Text style={styles.sheetTitle}>Available Routes</Text>
 
-          <Text style={styles.controlLabel}>Radius</Text>
-          <View style={styles.chipsRow}>
-            {[500, 1000, 2000].map((m) => (
-              <Pressable
-                key={m}
-                onPress={() => {
-                  setRadiusMeters(m);
-                  setRoutePlans([]);
-                  setSelectedPlanId(null);
-                }}
-                style={[
-                  styles.chip,
-                  radiusMeters === m ? styles.chipActive : styles.chipOutline,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    radiusMeters === m && styles.chipTextActive,
-                  ]}
-                >
-                  Radius {m >= 1000 ? `${m / 1000} km` : `${m} m`}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
           <Text style={styles.controlLabel}>Passenger Type</Text>
           <View style={styles.chipsRow}>
             {(
               [
                 { key: "regular" as const, label: "Regular" },
-                { key: "student" as const, label: "Student" },
-                { key: "pwd" as const, label: "PWD" },
-                { key: "senior" as const, label: "Senior" },
+                { key: "discounted" as const, label: "Discounted (20%)" },
               ] as const
             ).map(({ key, label }) => (
               <Pressable
@@ -1563,6 +1740,41 @@ const styles = StyleSheet.create({
   tripTopSpacer: {
     width: 40,
   },
+  segmentPopup: {
+    position: "absolute",
+    top: 150,
+    left: 16,
+    right: 16,
+    zIndex: 8,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: "#FFD43B",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  segmentPopupTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#1f2937",
+    marginBottom: 6,
+  },
+  segmentPopupLine: {
+    fontSize: 13,
+    color: "#334155",
+    lineHeight: 20,
+  },
+  segmentPopupClose: {
+    alignSelf: "flex-end",
+    color: GREEN,
+    fontWeight: "700",
+    marginTop: 6,
+  },
   tripHudOuter: {
     position: "absolute",
     left: 0,
@@ -1606,6 +1818,25 @@ const styles = StyleSheet.create({
   tripHudStopLabel: {
     fontWeight: "700",
     color: GREEN,
+  },
+  tripHudSegments: {
+    borderTopWidth: 1,
+    borderTopColor: "#e2e8f0",
+    marginTop: 6,
+    marginBottom: 8,
+    paddingTop: 8,
+  },
+  tripHudSectionTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
+    marginBottom: 4,
+  },
+  tripHudSegment: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#334155",
+    marginBottom: 2,
   },
   tripHudDistance: {
     fontSize: 14,

@@ -2,7 +2,7 @@
 -- App uses client-side computeFlatFareForTrip() in lib/transitRoutes.ts — this is not required for the Expo build.
 --
 -- vehicle legs = 1 + number of transfers (direct = 1 leg).
--- Regular: 13 PHP/leg. Student / pwd / senior: 11 PHP/leg.
+-- Discounted passengers pay 20% less than the regular fare.
 
 create or replace function public.compute_route_fare(
   p_route_id text,
@@ -27,7 +27,7 @@ as $$
     select
       p_route_id as rid,
       (13 * n)::numeric as reg_total,
-      (11 * n)::numeric as disc_total,
+      (13 * n * 0.8)::numeric as disc_total,
       n
     from legs
   )
@@ -35,12 +35,12 @@ as $$
     c.rid,
     c.reg_total,
     case
-      when lower(trim(p_discount_code)) in ('student', 'pwd', 'senior')
+      when lower(trim(p_discount_code)) = 'discounted'
         then c.reg_total - c.disc_total
       else 0::numeric
     end as discount_amount,
     case
-      when lower(trim(p_discount_code)) in ('student', 'pwd', 'senior')
+      when lower(trim(p_discount_code)) = 'discounted'
         then c.disc_total
       else c.reg_total
     end as final_fare,

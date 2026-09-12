@@ -332,3 +332,55 @@ export async function getRouteBetween(
     "No route found between these places. Check the addresses or try driving directions only."
   );
 }
+
+/** Request a road-following walking path for the short access leg to a stop. */
+export async function getWalkingRouteBetween(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number }
+): Promise<LatLng[]> {
+  const key = getKey();
+  const url = new URL("https://maps.googleapis.com/maps/api/directions/json");
+  url.searchParams.set("origin", `${origin.lat},${origin.lng}`);
+  url.searchParams.set("destination", `${destination.lat},${destination.lng}`);
+  url.searchParams.set("mode", "walking");
+  url.searchParams.set("key", key);
+
+  const res = await fetch(url.toString());
+  const data = (await res.json()) as {
+    status: string;
+    error_message?: string;
+    routes?: { overview_polyline?: { points?: string } }[];
+  };
+  const encoded = data.routes?.[0]?.overview_polyline?.points;
+  if (data.status !== "OK" || !encoded) {
+    throw new Error(directionsStatusMessage(data.status, data.error_message));
+  }
+  return decodeGooglePolyline(encoded);
+}
+
+export async function getTravelDurationSeconds(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+  mode: "walking" | "driving"
+): Promise<number> {
+  const key = getKey();
+  const url = new URL("https://maps.googleapis.com/maps/api/directions/json");
+  url.searchParams.set("origin", `${origin.lat},${origin.lng}`);
+  url.searchParams.set("destination", `${destination.lat},${destination.lng}`);
+  url.searchParams.set("mode", mode);
+  url.searchParams.set("key", key);
+  const res = await fetch(url.toString());
+  const data = (await res.json()) as {
+    status: string;
+    error_message?: string;
+    routes?: { legs?: { duration?: { value?: number } }[] }[];
+  };
+  const seconds = data.routes?.[0]?.legs?.reduce(
+    (sum, leg) => sum + (leg.duration?.value ?? 0),
+    0
+  );
+  if (data.status !== "OK" || !seconds) {
+    throw new Error(directionsStatusMessage(data.status, data.error_message));
+  }
+  return seconds;
+}
