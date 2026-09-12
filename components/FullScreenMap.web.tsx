@@ -212,10 +212,7 @@ export function FullScreenMap({
       markersRef.current.push(destinationMarker);
     }
 
-    const activeTracked = trackedCoordinate ?? {
-      latitude,
-      longitude,
-    };
+    const activeTracked = trackedCoordinate ?? { latitude, longitude };
     if (
       activeTracked &&
       Number.isFinite(activeTracked.latitude) &&
@@ -227,9 +224,11 @@ export function FullScreenMap({
         title: "Your location",
       });
       markersRef.current.push(trackedMarker);
-      map.panTo({ lat: activeTracked.latitude, lng: activeTracked.longitude });
-      map.setZoom(NAV_ZOOM);
-      return;
+      if (navigationMode) {
+        map.panTo({ lat: activeTracked.latitude, lng: activeTracked.longitude });
+        map.setZoom(NAV_ZOOM);
+        return;
+      }
     }
 
     if (fitCoords.length >= 2 && !navigationMode) {

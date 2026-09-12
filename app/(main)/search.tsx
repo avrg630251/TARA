@@ -64,7 +64,7 @@ type ActiveInput = "origin" | "destination" | null;
 
 function isDefaultOriginLabel(label: string) {
   const t = label.trim().toLowerCase();
-  return t === "your location" || t === "current location";
+  return !t || t === "your location" || t === "current location";
 }
 
 function haversineMeters(
@@ -179,6 +179,9 @@ export default function SearchMapScreen() {
   const [navLatitude, setNavLatitude] = useState(latitude);
   const [navLongitude, setNavLongitude] = useState(longitude);
   const [accessPath, setAccessPath] = useState<LatLng[] | null>(null);
+  const [accessDurationMinutes, setAccessDurationMinutes] = useState<
+    number | null
+  >(null);
   const [selectedSegment, setSelectedSegment] =
     useState<DisplayRouteSegment | null>(null);
   const tripWatchRef = useRef<(() => void) | null>(null);
@@ -424,6 +427,7 @@ export default function SearchMapScreen() {
           segmentType: "walk",
           coordinates: accessPath,
           label: "Walk to boarding point",
+          durationMinutes: accessDurationMinutes,
         }
       : null;
     const routeSegments = tripActivePlan
@@ -440,12 +444,24 @@ export default function SearchMapScreen() {
     latitude,
     longitude,
     accessPath,
+    accessDurationMinutes,
   ]);
+
+  useEffect(() => {
+    if (!selectedSegment) return;
+    const updated = mapRouteSegments?.find(
+      (segment) => segment.segmentId === selectedSegment.segmentId
+    );
+    if (updated && updated !== selectedSegment) {
+      setSelectedSegment(updated);
+    }
+  }, [mapRouteSegments, selectedSegment]);
 
   useEffect(() => {
     const plan = selectedMapPlan;
     if (!plan?.boardingCoordinate) {
       setAccessPath(null);
+      setAccessDurationMinutes(null);
       return;
     }
 
@@ -466,6 +482,7 @@ export default function SearchMapScreen() {
     ) {
       return;
     }
+    setAccessDurationMinutes(null);
     accessRequestRef.current = { planId: plan.id, coordinate: currentLocation };
 
     let cancelled = false;
@@ -497,6 +514,31 @@ export default function SearchMapScreen() {
             accessRequestRef.current?.planId === requestPlanId
           ) {
             setAccessPath(directPath);
+          }
+        });
+      void googleMapsRoutes
+        .getTravelDurationSeconds(
+          { lat: currentLocation.latitude, lng: currentLocation.longitude },
+          {
+            lat: plan.boardingCoordinate!.latitude,
+            lng: plan.boardingCoordinate!.longitude,
+          },
+          "walking"
+        )
+        .then((seconds) => {
+          if (
+            !cancelled &&
+            accessRequestRef.current?.planId === requestPlanId
+          ) {
+            setAccessDurationMinutes(Math.max(1, Math.ceil(seconds / 60)));
+          }
+        })
+        .catch(() => {
+          if (
+            !cancelled &&
+            accessRequestRef.current?.planId === requestPlanId
+          ) {
+            setAccessDurationMinutes(null);
           }
         });
     }, 250);
@@ -674,6 +716,9 @@ export default function SearchMapScreen() {
     setSelectedPlanId(null);
     try {
         const useGpsOrigin = isDefaultOriginLabel(originLabel);
+        if (useGpsOrigin && !originLabel.trim()) {
+          setOriginLabel("Your location");
+        }
         let originGeo: { lat: number; lng: number };
         if (useGpsOrigin) {
           try {
