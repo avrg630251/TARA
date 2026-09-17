@@ -56,15 +56,6 @@ export default function MainLayout() {
           }}
         />
         <Tabs.Screen
-          name="common-stops"
-          options={{
-            title: "Common Stops",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="pin" size={size ?? 22} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
           name="schedule"
           options={{
             title: "Schedule",
@@ -76,9 +67,9 @@ export default function MainLayout() {
         <Tabs.Screen
           name="saved"
           options={{
-            title: "Saved",
+            title: "History",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="bookmark" size={size ?? 22} color={color} />
+              <Ionicons name="time-outline" size={size ?? 22} color={color} />
             ),
           }}
         />

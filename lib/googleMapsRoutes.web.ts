@@ -157,7 +157,7 @@ export async function getPlaceSuggestions(
 async function routeWithGoogleMaps(
   origin: { lat: number; lng: number },
   destination: { lat: number; lng: number },
-  mode: "transit" | "driving",
+  mode: "transit" | "driving" | "walking",
   routingPreference?: GoogleTransitPref
 ): Promise<any[]> {
   await loadGoogleMapsApi();
@@ -168,7 +168,11 @@ async function routeWithGoogleMaps(
       origin: { lat: origin.lat, lng: origin.lng },
       destination: { lat: destination.lat, lng: destination.lng },
       travelMode:
-        mode === "driving" ? g.maps.TravelMode.DRIVING : g.maps.TravelMode.TRANSIT,
+        mode === "driving"
+          ? g.maps.TravelMode.DRIVING
+          : mode === "walking"
+            ? g.maps.TravelMode.WALKING
+            : g.maps.TravelMode.TRANSIT,
       provideRouteAlternatives: mode === "driving",
       drivingOptions:
         mode === "driving"
@@ -257,6 +261,7 @@ export async function getRouteBetween(
         summary: best?.summary ?? "",
       };
     }
+
   }
 
   const transitRoutes = await routeWithGoogleMaps(origin, destination, "transit");
@@ -272,4 +277,36 @@ export async function getRouteBetween(
   throw new Error(
     "No route found between these places. Check the addresses or try driving directions only."
   );
+}
+
+export async function getWalkingRouteBetween(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number }
+): Promise<LatLng[]> {
+  const routes = await routeWithGoogleMaps(origin, destination, "walking");
+  const path: any[] = routes[0]?.overview_path ?? [];
+  const coordinates = path.map((point) => ({
+    latitude: Number(point.lat()),
+    longitude: Number(point.lng()),
+  }));
+  if (coordinates.length < 2) {
+    throw new Error("No walking route found to the boarding point.");
+  }
+  return coordinates;
+}
+
+export async function getTravelDurationSeconds(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+  mode: "walking" | "driving"
+): Promise<number> {
+  const routes = await routeWithGoogleMaps(origin, destination, mode);
+  const seconds = (routes[0]?.legs ?? []).reduce(
+    (sum: number, leg: any) => sum + Number(leg?.duration?.value ?? 0),
+    0
+  );
+  if (!seconds) {
+    throw new Error("Could not calculate walking time to the boarding point.");
+  }
+  return seconds;
 }

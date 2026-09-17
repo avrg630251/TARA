@@ -2,35 +2,20 @@ import { kvGet, kvSet } from "@/lib/kvStorage";
 
 export type ClassScheduleItem = {
   id: string;
-  title: string;
-  day: string;
+  subjectCode: string;
+  subject: string;
+  days: string[];
   time: string;
-  location: string;
+  /** Legacy display fields are kept when reading older saved schedules. */
+  title?: string;
+  day?: string;
+  location?: string;
   routeHint?: string;
 };
 
 const CLASS_SCHEDULES_KEY = "tara:classSchedules";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-export const DEFAULT_CLASS_SCHEDULES: ClassScheduleItem[] = [
-  {
-    id: "default-math-730",
-    title: "Math 101",
-    day: "Mon",
-    time: "07:30",
-    location: "Main Campus Building A",
-    routeHint: "Leave early for the morning commute.",
-  },
-  {
-    id: "default-english-930",
-    title: "English 201",
-    day: "Tue",
-    time: "09:30",
-    location: "Arts and Sciences Hall",
-    routeHint: "Take the direct route before class time.",
-  },
-];
 
 function normalizeTimeValue(value: string): string {
   const trimmed = value.trim();
@@ -44,6 +29,20 @@ function normalizeTimeValue(value: string): string {
   if (hours === 12) hours = isPm ? 12 : 0;
   else if (isPm) hours += 12;
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+export function normalizeScheduleTime(
+  value: string,
+  meridiem: "AM" | "PM"
+): string | null {
+  const match = value.trim().match(/^(\d{1,2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2] ?? "00");
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+  let hours24 = hour % 12;
+  if (meridiem === "PM") hours24 += 12;
+  return `${String(hours24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 export function formatTimeDisplay(value: string): string {
@@ -77,15 +76,14 @@ export function parseClassScheduleText(raw: string): ClassScheduleItem[] {
 
     const day = parts[0].replace(/\.$/, "");
     const time = parts[1];
-    const title = parts.slice(2).join(" ") || "Class";
-    const location = title.includes(" at ") ? title.split(/\s+at\s+/i)[1] ?? "" : "";
+    const subject = parts.slice(2).join(" ") || "Class";
 
     items.push({
-      id: `${title}-${day}-${time}-${items.length}`,
-      title: title.replace(/\s+at\s+.*$/i, ""),
-      day,
+      id: `${subject}-${day}-${time}-${items.length}`,
+      subjectCode: "",
+      subject: subject.replace(/\s+at\s+.*$/i, ""),
+      days: [day],
       time: normalizeTimeValue(time),
-      location: location || "Campus",
       routeHint: "Recommended based on this class time.",
     });
   }
@@ -93,16 +91,47 @@ export function parseClassScheduleText(raw: string): ClassScheduleItem[] {
   return items;
 }
 
-export function loadClassSchedules(): Promise<ClassScheduleItem[]> {
-  return kvGet(CLASS_SCHEDULES_KEY).then((raw) => {
-    if (!raw) return DEFAULT_CLASS_SCHEDULES;
+export async function loadClassSchedules(
+  accountSchedules?: unknown
+): Promise<ClassScheduleItem[]> {
+  if (Array.isArray(accountSchedules) && accountSchedules.length) {
+    return normalizeLoadedSchedules(accountSchedules);
+  }
+
+  const raw = await kvGet(CLASS_SCHEDULES_KEY);
+  {
+    if (!raw) return [];
     try {
-      const parsed = JSON.parse(raw) as ClassScheduleItem[];
-      return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_CLASS_SCHEDULES;
+      const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as Array<
+        Partial<ClassScheduleItem> & { title?: string; day?: string }
+      >;
+      if (!Array.isArray(parsed) || !parsed.length) return [];
+      return normalizeLoadedSchedules(parsed);
     } catch {
-      return DEFAULT_CLASS_SCHEDULES;
+      return [];
     }
-  });
+  }
+}
+
+function normalizeLoadedSchedules(
+  parsed: Array<Partial<ClassScheduleItem> & { title?: string; day?: string }>
+): ClassScheduleItem[] {
+  return parsed.map((item, index) => {
+        const subject = item.subject?.trim() || item.title?.trim() || "Class";
+        const days = Array.isArray(item.days)
+          ? item.days.filter((day): day is string => typeof day === "string")
+          : item.day
+            ? [item.day]
+            : ["Mon"];
+        return {
+          id: item.id || `${subject}-${index}`,
+          subjectCode: item.subjectCode?.trim() || "",
+          subject,
+          days,
+          time: normalizeTimeValue(item.time || "08:00"),
+          routeHint: item.routeHint,
+        };
+      });
 }
 
 export async function saveClassSchedules(items: ClassScheduleItem[]): Promise<void> {
@@ -121,16 +150,22 @@ export function getNextClassInfo(
   const candidates = items
     .map((item) => {
       let dayOffset = 0;
-      const sameDay = item.day.toLowerCase() === todayName.toLowerCase();
+      const scheduleDays =
+        item.days?.length
+          ? item.days
+          : item.day
+            ? [item.day]
+            : [];
+      const sameDay = scheduleDays.some(
+        (day) => day.slice(0, 3).toLowerCase() === todayName.toLowerCase()
+      );
       if (!sameDay) {
-        const weekdayIndex = DAY_NAMES.indexOf(item.day.slice(0, 3).charAt(0).toUpperCase() + item.day.slice(1, 3).toLowerCase());
         const todayIndex = DAY_NAMES.indexOf(todayName);
-        if (weekdayIndex >= 0 && todayIndex >= 0) {
-          dayOffset = (weekdayIndex - todayIndex + 7) % 7;
-          if (dayOffset === 0) dayOffset = 7;
-        } else {
-          dayOffset = 7;
-        }
+        const offsets = scheduleDays
+          .map((day) => DAY_NAMES.indexOf(day.slice(0, 3).replace(/^./, (c) => c.toUpperCase())))
+          .filter((index) => index >= 0)
+          .map((index) => (index - todayIndex + 7) % 7 || 7);
+        dayOffset = offsets.length ? Math.min(...offsets) : 7;
       }
 
       const classMinutes = toMinutes(item.time);
@@ -167,6 +202,15 @@ export function sortRoutesForSchedule<T extends { etaMinutes?: number | null }>(
   if (!schedules.length) return items;
   const nextClass = getNextClassInfo(schedules, now);
   const targetMinutes = nextClass.minutesUntil ?? 60;
+
+  // When the next class is close, arrival time matters more than fare.
+  if (targetMinutes <= 90) {
+    return [...items].sort(
+      (a, b) =>
+        (a.etaMinutes ?? Number.POSITIVE_INFINITY) -
+        (b.etaMinutes ?? Number.POSITIVE_INFINITY)
+    );
+  }
 
   return [...items].sort((a, b) => {
     const aEta = a.etaMinutes ?? Number.POSITIVE_INFINITY;

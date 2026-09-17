@@ -41,6 +41,8 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (session?.user) {
+      // The input must reflect the account after auth finishes loading.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(fullNameFromUser(session.user));
     }
   }, [session?.user]);

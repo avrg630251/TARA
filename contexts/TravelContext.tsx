@@ -91,6 +91,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
                 offStop: plan.offStop,
                 estimatedText: plan.estimatedText,
                 fareText: plan.fareText,
+                polyline: plan.polyline,
                 savedAt: new Date().toISOString(),
               } satisfies SavedRouteBookmark,
             ];

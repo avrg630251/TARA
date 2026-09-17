@@ -10,6 +10,19 @@ module.exports = ({ config }) => ({
           "TARA uses your location to show your position on the map preview.",
       },
     ],
+    [
+      "react-native-maps",
+      {
+        androidGoogleMapsApiKey:
+          process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "",
+        ...(process.env.EXPO_PUBLIC_GOOGLE_MAPS_IOS_API_KEY
+          ? {
+              iosGoogleMapsApiKey:
+                process.env.EXPO_PUBLIC_GOOGLE_MAPS_IOS_API_KEY,
+            }
+          : {}),
+      },
+    ],
   ],
   ios: {
     ...config.ios,
@@ -17,15 +30,6 @@ module.exports = ({ config }) => ({
       ...config.ios?.infoPlist,
       NSLocationWhenInUseUsageDescription:
         "TARA uses your location to show your position on the map preview.",
-    },
-  },
-  android: {
-    ...config.android,
-    config: {
-      ...(config.android?.config ?? {}),
-      googleMaps: {
-        apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "",
-      },
     },
   },
 });

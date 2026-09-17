@@ -161,9 +161,18 @@ export function FullScreenMap({
               ? [
                   {
                     icon: {
-                      path: "M 0,-1 0,1",
+                      path: g.maps.SymbolPath.CIRCLE,
+                      fillColor:
+                        selectedSegmentId === segment.segmentId
+                          ? "#FFD43B"
+                          : "#495057",
+                      fillOpacity: 1,
+                      strokeColor:
+                        selectedSegmentId === segment.segmentId
+                          ? "#FFD43B"
+                          : "#495057",
                       strokeOpacity: 1,
-                      scale: 3,
+                      scale: 2.5,
                     },
                     offset: "0",
                     repeat: "12px",
@@ -260,7 +269,7 @@ export function FullScreenMap({
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "#e9ecef",
   },
   webMap: {

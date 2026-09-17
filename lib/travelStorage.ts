@@ -1,4 +1,5 @@
 import { kvGet, kvSet } from "@/lib/kvStorage";
+import type { LatLng } from "@/lib/googleMapsRoutes";
 
 const BOOKMARKS_KEY = "tara:bookmarks";
 const RECENT_KEY = "tara:recentTrips";
@@ -15,8 +16,9 @@ export type SavedRouteBookmark = {
   offStop: string;
   estimatedText: string;
   fareText: string;
+  polyline?: LatLng[];
   savedAt: string;
-};
+}
 
 export type RecentTrip = {
   key: string;

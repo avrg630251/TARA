@@ -43,7 +43,7 @@ export type CustomRouteResult = {
 
 export async function fetchNearestCustomItinerary(
   origin: LatLng
-): Promise<CustomRouteResult | null> {
+): Promise<CustomRouteResult[]> {
   const { data: firstSegments, error: firstSegmentsError } = await supabase
     .from("custom_route_segments")
     .select("*")
@@ -55,7 +55,7 @@ export async function fetchNearestCustomItinerary(
   const originPointIds = [
     ...new Set(firstSegmentRows.map((segment) => segment.from_point_id)),
   ];
-  if (!originPointIds.length) return null;
+  if (!originPointIds.length) return [];
 
   const { data: points, error: pointsError } = await supabase
     .from("custom_route_points")
@@ -66,7 +66,7 @@ export async function fetchNearestCustomItinerary(
   if (pointsError) throw new Error(pointsError.message);
 
   const terminals = (points ?? []) as CustomRoutePoint[];
-  if (!terminals.length) return null;
+  if (!terminals.length) return [];
 
   const pointById = new Map(terminals.map((point) => [point.point_id, point]));
   const candidates = firstSegmentRows
@@ -100,87 +100,101 @@ export async function fetchNearestCustomItinerary(
         nearestLineIndex: number;
       } => candidate !== null
     );
-  const nearest = candidates.sort((a, b) => a.distance - b.distance)[0];
-  if (!nearest) return null;
-
-  if (!nearest.terminal.itinerary_id) return null;
-
-  const { data: segments, error: segmentsError } = await supabase
-    .from("custom_route_segments")
-    .select("*")
-    .eq("itinerary_id", nearest.terminal.itinerary_id)
-    .order("segment_sequence", { ascending: true });
-
-  if (segmentsError) throw new Error(segmentsError.message);
-
-  let orderedSegments = (segments ?? []) as CustomRouteSegment[];
-  if (!orderedSegments.length) return null;
-
-  let boardingName = nearest.terminal.name;
-  let boardingCoordinate: LatLng = {
-    latitude: nearest.terminal.latitude,
-    longitude: nearest.terminal.longitude,
-  };
-  if (nearest.segment.segment_type === "jeepney" && nearest.nearestLineIndex >= 0) {
-    boardingName = "Nearest point along the jeepney route";
-    const [longitude, latitude] =
-      nearest.segment.coordinates[nearest.nearestLineIndex];
-    boardingCoordinate = { latitude, longitude };
-    const first = orderedSegments[0];
-    orderedSegments = [
-      {
-        ...first,
-        coordinates: first.coordinates.slice(nearest.nearestLineIndex),
-      },
-      ...orderedSegments.slice(1),
-    ];
-  }
-
-  const destinationId = orderedSegments[orderedSegments.length - 1].destination_id;
-  const { data: destination, error: destinationError } = await supabase
-    .from("custom_route_points")
-    .select("*")
-    .eq("point_id", destinationId)
-    .single();
-
-  if (destinationError) throw new Error(destinationError.message);
-
-  const coordinates: LatLng[] = [];
-  for (const segment of orderedSegments) {
-    const segmentCoordinates = segment.coordinates
-      .filter(
-        (coordinate): coordinate is [number, number] =>
-          Array.isArray(coordinate) &&
-          coordinate.length >= 2 &&
-          Number.isFinite(Number(coordinate[0])) &&
-          Number.isFinite(Number(coordinate[1]))
-      )
-      .map(([longitude, latitude]) => ({
-        latitude: Number(latitude),
-        longitude: Number(longitude),
-      }));
-    coordinates.push(
-      ...(coordinates.length ? segmentCoordinates.slice(1) : segmentCoordinates)
-    );
-  }
-
-  return {
-    origin: nearest.terminal,
-    boardingName,
-    boardingCoordinate,
-    destination: destination as CustomRoutePoint,
-    segments: orderedSegments,
-    coordinates,
-    fare: orderedSegments.every(
-      (segment) => segment.segment_type === "walk" || segment.fare != null
+  const nearestByItinerary = candidates
+    .filter((candidate) => candidate.terminal.itinerary_id)
+    .sort((a, b) => a.distance - b.distance)
+    .filter(
+      (candidate, index, all) =>
+        all.findIndex(
+          (other) =>
+            other.terminal.itinerary_id === candidate.terminal.itinerary_id
+        ) === index
     )
-      ? orderedSegments.reduce(
-          (total, segment) =>
-            total + (segment.segment_type === "walk" ? 0 : segment.fare ?? 0),
-          0
+    .slice(0, 2);
+
+  const results: CustomRouteResult[] = [];
+  for (const nearest of nearestByItinerary) {
+    const { data: segments, error: segmentsError } = await supabase
+      .from("custom_route_segments")
+      .select("*")
+      .eq("itinerary_id", nearest.terminal.itinerary_id!)
+      .order("segment_sequence", { ascending: true });
+    if (segmentsError) throw new Error(segmentsError.message);
+
+    let orderedSegments = (segments ?? []) as CustomRouteSegment[];
+    if (!orderedSegments.length) continue;
+
+    let boardingName = nearest.terminal.name;
+    let boardingCoordinate: LatLng = {
+      latitude: nearest.terminal.latitude,
+      longitude: nearest.terminal.longitude,
+    };
+    if (
+      nearest.segment.segment_type === "jeepney" &&
+      nearest.nearestLineIndex >= 0
+    ) {
+      boardingName = "Nearest point along the jeepney route";
+      const [longitude, latitude] =
+        nearest.segment.coordinates[nearest.nearestLineIndex];
+      boardingCoordinate = { latitude, longitude };
+      const first = orderedSegments[0];
+      orderedSegments = [
+        {
+          ...first,
+          coordinates: first.coordinates.slice(nearest.nearestLineIndex),
+        },
+        ...orderedSegments.slice(1),
+      ];
+    }
+
+    const destinationId =
+      orderedSegments[orderedSegments.length - 1].destination_id;
+    const { data: destination, error: destinationError } = await supabase
+      .from("custom_route_points")
+      .select("*")
+      .eq("point_id", destinationId)
+      .single();
+    if (destinationError) throw new Error(destinationError.message);
+
+    const coordinates: LatLng[] = [];
+    for (const segment of orderedSegments) {
+      const segmentCoordinates = segment.coordinates
+        .filter(
+          (coordinate): coordinate is [number, number] =>
+            Array.isArray(coordinate) &&
+            coordinate.length >= 2 &&
+            Number.isFinite(Number(coordinate[0])) &&
+            Number.isFinite(Number(coordinate[1]))
         )
-      : null,
-  };
+        .map(([longitude, latitude]) => ({
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+        }));
+      coordinates.push(
+        ...(coordinates.length ? segmentCoordinates.slice(1) : segmentCoordinates)
+      );
+    }
+
+    results.push({
+      origin: nearest.terminal,
+      boardingName,
+      boardingCoordinate,
+      destination: destination as CustomRoutePoint,
+      segments: orderedSegments,
+      coordinates,
+      fare: orderedSegments.every(
+        (segment) => segment.segment_type === "walk" || segment.fare != null
+      )
+        ? orderedSegments.reduce(
+            (total, segment) =>
+              total + (segment.segment_type === "walk" ? 0 : segment.fare ?? 0),
+            0
+          )
+        : null,
+    });
+  }
+
+  return results;
 }
 
 function distanceMeters(

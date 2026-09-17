@@ -11,12 +11,13 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import {
-  DEFAULT_CLASS_SCHEDULES,
   formatTimeDisplay,
   getNextClassInfo,
   loadClassSchedules,
-  parseClassScheduleText,
+  normalizeScheduleTime,
   saveClassSchedules,
   type ClassScheduleItem,
 } from "@/lib/classSchedules";
@@ -24,68 +25,68 @@ import {
 const GREEN = "#1B4332";
 
 export default function ScheduleScreen() {
-  const [items, setItems] = useState<ClassScheduleItem[]>(DEFAULT_CLASS_SCHEDULES);
-  const [title, setTitle] = useState("");
-  const [day, setDay] = useState("Mon");
-  const [time, setTime] = useState("07:30");
-  const [location, setLocation] = useState("");
-  const [bulkText, setBulkText] = useState("");
+  const [items, setItems] = useState<ClassScheduleItem[]>([]);
+  const [subjectCode, setSubjectCode] = useState("");
+  const [subject, setSubject] = useState("");
+  const [days, setDays] = useState<string[]>(["Mon"]);
+  const [time, setTime] = useState("");
+  const [meridiem, setMeridiem] = useState<"AM" | "PM">("AM");
+  const { session } = useAuth();
 
   useEffect(() => {
     let cancelled = false;
-    void loadClassSchedules().then((saved) => {
+    void loadClassSchedules(session?.user.user_metadata?.class_schedules).then((saved) => {
       if (!cancelled) setItems(saved);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [session?.user.user_metadata?.class_schedules]);
 
   const nextClass = useMemo(() => getNextClassInfo(items), [items]);
 
   async function saveAndSync(next: ClassScheduleItem[]) {
     setItems(next);
     await saveClassSchedules(next);
+    const { error } = await supabase.auth.updateUser({
+      data: { class_schedules: next },
+    });
+    if (error) {
+      Alert.alert("Could not save schedule", error.message);
+    }
   }
 
   async function addSingleSchedule() {
-    if (!title.trim()) {
-      Alert.alert("Class name needed", "Enter the class title before adding the schedule.");
+    if (!subjectCode.trim() || !subject.trim()) {
+      Alert.alert("Subject details needed", "Enter both the subject code and subject.");
+      return;
+    }
+    if (!days.length) {
+      Alert.alert("Days needed", "Select at least one class day.");
+      return;
+    }
+    const normalizedTime = normalizeScheduleTime(time, meridiem);
+    if (!normalizedTime) {
+      Alert.alert("Valid time needed", "Enter a time such as 7:30 and choose AM or PM.");
       return;
     }
 
     const nextItem: ClassScheduleItem = {
-      id: `${title}-${day}-${time}-${Date.now()}`,
-      title: title.trim(),
-      day,
-      time,
-      location: location.trim() || "Campus",
+      id: `${subjectCode}-${subject}-${Date.now()}`,
+      subjectCode: subjectCode.trim(),
+      subject: subject.trim(),
+      days,
+      time: normalizedTime,
       routeHint: "Best route for this class time.",
     };
 
     const next = [nextItem, ...items];
     await saveAndSync(next);
-    setTitle("");
-    setLocation("");
-    setTime("07:30");
-    setDay("Mon");
-  }
-
-  async function importBulkSchedules() {
-    if (!bulkText.trim()) {
-      Alert.alert("Nothing to import", "Paste or type some class schedules first.");
-      return;
-    }
-
-    const parsed = parseClassScheduleText(bulkText);
-    if (!parsed.length) {
-      Alert.alert("Could not parse", "Use lines like: Mon - 7:30 - Math 101 - Main Campus");
-      return;
-    }
-
-    const next = [...parsed, ...items];
-    await saveAndSync(next);
-    setBulkText("");
+    setSubjectCode("");
+    setSubject("");
+    setTime("");
+    setMeridiem("AM");
+    setDays(["Mon"]);
   }
 
   async function removeSchedule(id: string) {
@@ -104,9 +105,11 @@ export default function ScheduleScreen() {
         {nextClass.item ? (
           <View style={styles.highlightCard}>
             <Text style={styles.highlightLabel}>Next class</Text>
-            <Text style={styles.highlightTitle}>{nextClass.item.title}</Text>
+            <Text style={styles.highlightTitle}>
+              {nextClass.item.subjectCode} · {nextClass.item.subject}
+            </Text>
             <Text style={styles.highlightMeta}>
-              {nextClass.item.day} · {formatTimeDisplay(nextClass.item.time)} · {nextClass.item.location}
+              {nextClass.item.days.join(", ")} · {formatTimeDisplay(nextClass.item.time)}
             </Text>
           </View>
         ) : null}
@@ -114,51 +117,64 @@ export default function ScheduleScreen() {
         <View style={styles.formCard}>
           <Text style={styles.sectionTitle}>Add a class</Text>
           <TextInput
-            value={title}
-            onChangeText={setTitle}
-            placeholder="Class name"
+            value={subjectCode}
+            onChangeText={setSubjectCode}
+            placeholder="Subject Code"
             style={styles.input}
+            autoCapitalize="characters"
           />
-
-          <View style={styles.inlineFields}>
-            <TextInput
-              value={day}
-              onChangeText={setDay}
-              placeholder="Mon"
-              style={[styles.input, styles.halfInput]}
-            />
-            <TextInput
-              value={time}
-              onChangeText={setTime}
-              placeholder="07:30"
-              style={[styles.input, styles.halfInput]}
-            />
-          </View>
-
           <TextInput
-            value={location}
-            onChangeText={setLocation}
-            placeholder="Location or building"
+            value={subject}
+            onChangeText={setSubject}
+            placeholder="Subject"
             style={styles.input}
           />
+          <Text style={styles.fieldLabel}>Days</Text>
+          <View style={styles.daysRow}>
+            {["Mon", "Tue", "Wed", "Thu", "Fri"].map((day) => {
+              const selected = days.includes(day);
+              return (
+                <Pressable
+                  key={day}
+                  onPress={() =>
+                    setDays((current) =>
+                      selected
+                        ? current.filter((item) => item !== day)
+                        : [...current, day]
+                    )
+                  }
+                  style={[styles.dayChip, selected && styles.dayChipActive]}
+                >
+                  <Text style={[styles.dayChipText, selected && styles.dayChipTextActive]}>
+                    {day}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <TextInput
+            value={time}
+            onChangeText={setTime}
+            placeholder="Time (e.g. 7:30)"
+            style={styles.input}
+            keyboardType="numbers-and-punctuation"
+          />
+          <View style={styles.meridiemRow}>
+            {(["AM", "PM"] as const).map((option) => (
+              <Pressable
+                key={option}
+                onPress={() => setMeridiem(option)}
+                style={[styles.meridiemChip, meridiem === option && styles.dayChipActive]}
+              >
+                <Text style={[styles.dayChipText, meridiem === option && styles.dayChipTextActive]}>
+                  {option}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
 
           <Pressable style={styles.primaryButton} onPress={addSingleSchedule}>
             <Text style={styles.primaryButtonText}>Add class</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.formCard}>
-          <Text style={styles.sectionTitle}>Import schedule</Text>
-          <TextInput
-            value={bulkText}
-            onChangeText={setBulkText}
-            placeholder="Mon - 7:30 - Math 101 - Main Campus"
-            multiline
-            numberOfLines={5}
-            style={[styles.input, styles.textArea]}
-          />
-          <Pressable style={styles.secondaryButton} onPress={importBulkSchedules}>
-            <Text style={styles.secondaryButtonText}>Import schedule</Text>
           </Pressable>
         </View>
 
@@ -172,9 +188,11 @@ export default function ScheduleScreen() {
             <View key={item.id} style={styles.itemCard}>
               <View style={styles.itemHeader}>
                 <View>
-                  <Text style={styles.itemTitle}>{item.title}</Text>
+                  <Text style={styles.itemTitle}>
+                    {item.subjectCode ? `${item.subjectCode} · ` : ""}{item.subject}
+                  </Text>
                   <Text style={styles.itemMeta}>
-                    {item.day} · {formatTimeDisplay(item.time)} · {item.location}
+                    {item.days.join(", ")} · {formatTimeDisplay(item.time)}
                   </Text>
                 </View>
                 <Pressable onPress={() => removeSchedule(item.id)}>
@@ -249,6 +267,12 @@ const styles = StyleSheet.create({
     color: GREEN,
     marginBottom: 10,
   },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#495057",
+    marginBottom: 8,
+  },
   input: {
     backgroundColor: "#f5f7f8",
     borderColor: "#dbe2e8",
@@ -263,6 +287,46 @@ const styles = StyleSheet.create({
   inlineFields: {
     flexDirection: "row",
     gap: 10,
+  },
+  daysRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  meridiemRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: -4,
+    marginBottom: 10,
+  },
+  meridiemChip: {
+    minWidth: 58,
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#cfe7d9",
+    backgroundColor: "#f5f7f8",
+    paddingVertical: 8,
+  },
+  dayChip: {
+    width: 52,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#cfe7d9",
+    backgroundColor: "#f5f7f8",
+  },
+  dayChipActive: {
+    backgroundColor: GREEN,
+  },
+  dayChipText: {
+    color: GREEN,
+    fontWeight: "700",
+  },
+  dayChipTextActive: {
+    color: "#fff",
   },
   halfInput: {
     flex: 1,

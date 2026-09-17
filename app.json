@@ -7,9 +7,9 @@
     "icon": "./assets/images/icon.png",
     "scheme": "tara",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.tara.taraapp",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "TARA uses your location to show your position on the map preview."
       }
@@ -23,13 +23,7 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": false,
       "predictiveBackGestureEnabled": false,
-      "config": {
-        "googleMaps": {
-          "apiKey": "process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY"
-        }
-      },
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
@@ -43,6 +37,8 @@
       "expo-router",
       "expo-font",
       "expo-web-browser",
+      "expo-image",
+      "expo-status-bar",
       [
         "expo-splash-screen",
         {
