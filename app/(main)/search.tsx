@@ -208,6 +208,13 @@ export default function SearchMapScreen() {
     coordinate: LatLng;
   } | null>(null);
 
+  useEffect(() => {
+    const savedDiscount = session?.user.user_metadata?.discount_type;
+    if (savedDiscount === "discounted" || savedDiscount === "regular") {
+      setDiscountCode(savedDiscount);
+    }
+  }, [session?.user.user_metadata?.discount_type]);
+
   const stopTripWatch = useCallback(() => {
     if (!tripWatchRef.current) return;
     try {
@@ -1408,36 +1415,6 @@ export default function SearchMapScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.sheetTitle}>Available Routes</Text>
-
-          <Text style={styles.controlLabel}>Passenger Type</Text>
-          <View style={styles.chipsRow}>
-            {(
-              [
-                { key: "regular" as const, label: "Regular" },
-                { key: "discounted" as const, label: "Discounted (20%)" },
-              ] as const
-            ).map(({ key, label }) => (
-              <Pressable
-                key={key}
-                onPress={() => {
-                  setDiscountCode(key);
-                }}
-                style={[
-                  styles.chip,
-                  discountCode === key ? styles.chipActive : styles.chipOutline,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    discountCode === key && styles.chipTextActive,
-                  ]}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
 
           <Text style={styles.controlLabel}>Route Preference</Text>
           <View style={styles.chipsRow}>

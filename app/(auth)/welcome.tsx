@@ -1,39 +1,120 @@
 import { useRouter } from "expo-router";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Animated,
+  Easing,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useEffect, useState } from "react";
 
 const GREEN = "#1C5141";
 const WHITE = "#FFFFFF";
-const imgAnimation =
-  "https://www.figma.com/api/mcp/asset/fa7d3011-866a-49bc-9844-39e1712e69cc.png";
+const jeepneyAsset = require("../../assets/images/jeepney.png");
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const [jeepneyTranslateX] = useState(() => new Animated.Value(-280));
+  const [jeepneyOpacity] = useState(() => new Animated.Value(0));
+  const [jeepneyScale] = useState(() => new Animated.Value(0.9));
+  const [contentOpacity] = useState(() => new Animated.Value(0));
+  const [contentTranslateY] = useState(() => new Animated.Value(16));
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(jeepneyOpacity, {
+          toValue: 1,
+          duration: 260,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(jeepneyTranslateX, {
+          toValue: 0,
+          duration: 760,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(jeepneyScale, {
+          toValue: 1,
+          damping: 10,
+          stiffness: 130,
+          mass: 0.8,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(contentOpacity, {
+          toValue: 1,
+          duration: 420,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(contentTranslateY, {
+          toValue: 0,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  }, [
+    contentOpacity,
+    contentTranslateY,
+    jeepneyOpacity,
+    jeepneyScale,
+    jeepneyTranslateX,
+  ]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <View style={styles.root}>
-        <View style={styles.heroWrap}>
-          <Image
-            source={{ uri: imgAnimation }}
-            style={styles.heroImage}
-            resizeMode="cover"
-          />
-        </View>
-
-        <Text style={styles.title}>TARA!</Text>
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.primary,
-            pressed && styles.primaryPressed,
+        <Animated.View
+          style={[
+            styles.heroWrap,
+            {
+              opacity: jeepneyOpacity,
+              transform: [
+                { translateX: jeepneyTranslateX },
+                { scale: jeepneyScale },
+              ],
+            },
           ]}
-          onPress={() => router.push("/choose")}
-          accessibilityRole="button"
-          accessibilityLabel="Get started"
         >
-          <Text style={styles.primaryText}>GET STARTED</Text>
-        </Pressable>
+          <Image
+            source={jeepneyAsset}
+            style={styles.heroImage}
+            resizeMode="contain"
+            accessibilityLabel="TARA jeepney"
+          />
+        </Animated.View>
+
+        <Animated.View
+          style={[
+            styles.content,
+            {
+              opacity: contentOpacity,
+              transform: [{ translateY: contentTranslateY }],
+            },
+          ]}
+        >
+          <Text style={styles.title}>TARA!</Text>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.primary,
+              pressed && styles.primaryPressed,
+            ]}
+            onPress={() => router.push("/choose")}
+            accessibilityRole="button"
+            accessibilityLabel="Get started"
+          >
+            <Text style={styles.primaryText}>GET STARTED</Text>
+          </Pressable>
+        </Animated.View>
       </View>
     </SafeAreaView>
   );
@@ -61,7 +142,10 @@ const styles = StyleSheet.create({
   },
   heroImage: {
     width: 240,
-    height: 226,
+    height: 100,
+  },
+  content: {
+    alignItems: "center",
   },
   title: {
     fontSize: 48,

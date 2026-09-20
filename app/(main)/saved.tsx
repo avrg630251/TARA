@@ -13,38 +13,20 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useMemo, useState } from "react";
 
 import { useTravel } from "@/contexts/TravelContext";
-import { FullScreenMap } from "@/components/FullScreenMap";
 
 const GREEN = "#1B4332";
-const BORDER = "#e9ecef";
-
-type RouteFilter = "all" | "fastest" | "cheapest";
 
 export default function SavedScreen() {
   const router = useRouter();
-  const { bookmarks, recentTrips } = useTravel();
+  const { recentTrips } = useTravel();
   const { width } = useWindowDimensions();
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<RouteFilter>("all");
   const isDesktop = width >= 768;
 
   const items = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
-    const list = [
-      ...bookmarks.map((b) => ({
-        key: b.key,
-        title: b.routeName || `${b.originLabel} - ${b.destinationLabel}`,
-        from: b.originLabel,
-        to: b.destinationLabel,
-        meta: `${b.estimatedText} · ${b.fareText}`,
-        board: b.boardStop,
-        off: b.offStop,
-        polyline: b.polyline,
-        savedAt: b.savedAt,
-        badge: "FASTEST" as const,
-      })),
-      ...recentTrips.map((t) => ({
+    const list = recentTrips.map((t) => ({
         key: t.key,
         title: t.routeName || `${t.originLabel} - ${t.destinationLabel}`,
         from: t.originLabel,
@@ -54,9 +36,8 @@ export default function SavedScreen() {
         off: t.offStop,
         polyline: undefined,
         savedAt: t.startedAt,
-        badge: "CHEAPEST" as const,
-      })),
-    ];
+        badge: "COMPLETED" as const,
+      }));
 
     const filtered = normalizedQuery
       ? list.filter(({ title, from, to }) => {
@@ -65,16 +46,8 @@ export default function SavedScreen() {
         })
       : list;
 
-    if (filter === "fastest") {
-      return filtered.filter((item) => item.badge === "FASTEST");
-    }
-
-    if (filter === "cheapest") {
-      return filtered.filter((item) => item.badge === "CHEAPEST");
-    }
-
     return filtered;
-  }, [bookmarks, filter, query, recentTrips]);
+  }, [query, recentTrips]);
 
   function openSearch(origin: string, destination: string) {
     router.push({
@@ -122,27 +95,6 @@ export default function SavedScreen() {
             <Ionicons name="search-outline" size={20} color="#64748b" />
           </View>
 
-          <View style={styles.filterRow}>
-            {[
-              { label: "All", value: "all" },
-              { label: "Fastest Routes", value: "fastest" },
-              { label: "Cheapest Routes", value: "cheapest" },
-            ].map((option) => {
-              const selected = filter === option.value;
-              return (
-                <Pressable
-                  key={option.value}
-                  style={[styles.filterChip, selected && styles.filterChipActive]}
-                  onPress={() => setFilter(option.value as RouteFilter)}
-                >
-                  <Text style={[styles.filterText, selected && styles.filterTextActive]}>
-                    {option.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={styles.content}
@@ -159,32 +111,20 @@ export default function SavedScreen() {
                   <Text style={styles.tripDate}>
                     {formatSavedDate(item.savedAt)}
                   </Text>
-                  <Text style={styles.tripTime}>
-                    {item.badge === "FASTEST" ? "Bookmarked route" : "Completed trip"}
-                  </Text>
+                  <Text style={styles.tripTime}>Completed trip</Text>
                 </View>
 
                 <View style={styles.mapPreview}>
-                  {"polyline" in item && item.polyline && item.polyline.length > 1 ? (
-                    <FullScreenMap
-                      latitude={item.polyline[0].latitude}
-                      longitude={item.polyline[0].longitude}
-                      polylineCoordinates={item.polyline}
-                      destinationCoordinate={item.polyline.at(-1)}
-                      fitEdgePadding={{ top: 24, right: 24, bottom: 24, left: 24 }}
-                    />
-                  ) : (
-                    <View style={styles.mapUnavailable}>
-                      <Ionicons name="map-outline" size={38} color="#8aa49b" />
-                      <Text style={styles.mapUnavailableText}>Route map preview</Text>
-                    </View>
-                  )}
+                  <View style={styles.mapUnavailable}>
+                    <Ionicons name="map-outline" size={38} color="#8aa49b" />
+                    <Text style={styles.mapUnavailableText}>Route map preview</Text>
+                  </View>
                 </View>
 
                 <View style={styles.tripBody}>
                   <View style={styles.statusPill}>
                     <Ionicons name="checkmark-circle" size={14} color="#fff" />
-                    <Text style={styles.statusText}>{item.badge === "FASTEST" ? "Saved" : "Completed"}</Text>
+                    <Text style={styles.statusText}>Completed</Text>
                   </View>
 
                   <Text style={styles.locationText}>{"\u{1F4CD}"} {item.from}</Text>
@@ -301,56 +241,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingRight: 12,
   },
-  filterRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#edf1f3",
-    borderRadius: 16,
-    padding: 4,
-    marginBottom: 18,
-  },
-  filterChip: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 38,
-    borderRadius: 12,
-    backgroundColor: "transparent",
-  },
-  filterChipActive: {
-    backgroundColor: "#fff",
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  filterText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#334155",
-  },
-  filterTextActive: {
-    color: GREEN,
-  },
   scroll: {
     flex: 1,
   },
   content: {
     paddingBottom: 32,
-  },
-  routeCard: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.03,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
   },
   tripCard: {
     backgroundColor: "#f7f7f7",

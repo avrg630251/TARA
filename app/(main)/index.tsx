@@ -52,21 +52,12 @@ function formatTripDate(iso: string) {
   });
 }
 
-function formatTripTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 export default function HomeScreen() {
   const { session } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
-  const { bookmarks, recentTrips } = useTravel();
-  const recentPreview = useMemo(() => recentTrips.slice(0, 6), [recentTrips]);
+  const { bookmarks } = useTravel();
   const bookmarkPreview = useMemo(() => bookmarks.slice(0, 6), [bookmarks]);
   const cardWidth = Math.min(320, Math.max(260, windowWidth * 0.78));
 
@@ -222,56 +213,6 @@ export default function HomeScreen() {
                   onPress={() =>
                     openSearchWithRoute(t.originLabel, t.destinationLabel)
                   }
-                >
-                  <Text style={styles.reRouteBtnText}>Re-Route</Text>
-                </Pressable>
-              </View>
-            ))}
-          </ScrollView>
-        )}
-
-        <View style={styles.recentHeader}>
-          <Text style={styles.recentTitle}>Recent trips</Text>
-        </View>
-        {recentPreview.length === 0 ? (
-          <Text style={styles.recentEmpty}>
-            Completed trips will appear in History after you end a trip.
-          </Text>
-        ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.recentCarousel}
-          >
-            {recentPreview.map((t) => (
-              <View key={t.key} style={[styles.routeCard, { width: cardWidth }]}>
-                <View style={styles.chipRow}>
-                  <View style={styles.chip}>
-                    <Text style={styles.chipText}>{formatTripDate(t.startedAt)}</Text>
-                  </View>
-                  <View style={styles.chip}>
-                    <Text style={styles.chipText}>{formatTripTime(t.startedAt)}</Text>
-                  </View>
-                </View>
-                <Text style={styles.fromTo} numberOfLines={2}>
-                  <Text style={styles.fromToLabel}>From: </Text>
-                  {t.originLabel}
-                </Text>
-                <Text style={styles.fromTo} numberOfLines={2}>
-                  <Text style={styles.fromToLabel}>To: </Text>
-                  {t.destinationLabel}
-                </Text>
-                <View style={styles.etaRow}>
-                  <Text style={styles.etaLabel}>ETA: </Text>
-                  <Ionicons name="time-outline" size={16} color="#212529" />
-                  <Text style={styles.etaValue}> {t.etaText}</Text>
-                </View>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.reRouteBtn,
-                    pressed && styles.reRouteBtnPressed,
-                  ]}
-                  onPress={() => openSearchWithRoute(t.originLabel, t.destinationLabel)}
                 >
                   <Text style={styles.reRouteBtnText}>Re-Route</Text>
                 </Pressable>
