@@ -11,6 +11,7 @@ import type { LatLng } from "@/lib/googleMapsRoutes";
 import type { DisplayRouteSegment } from "@/lib/transitPlanOptions";
 
 export type RouteAlternativePolyline = {
+  id: string;
   coordinates: LatLng[];
   /** Highlighted alternative (typically user-selected chip). */
   selected: boolean;
@@ -26,6 +27,7 @@ type FullScreenMapProps = {
   /** Multiple paths — Google Maps-style alternates on one map. */
   routeAlternatives?: RouteAlternativePolyline[];
   routeSegments?: RouteSegmentPolyline[];
+  routeRenderKey?: string | null;
   destinationCoordinate?: LatLng | null;
   /** Bump to refit bounds (same coordinates, new selection). */
   fitSignal?: number;
@@ -80,6 +82,7 @@ export function FullScreenMap({
   polylineCoordinates,
   routeAlternatives,
   routeSegments,
+  routeRenderKey,
   destinationCoordinate,
   fitSignal,
   navigationMode = false,
@@ -194,7 +197,7 @@ export function FullScreenMap({
         ?         routeSegments.map((segment, index) =>
             segment.coordinates.length > 1 ? (
               <Polyline
-                key={segment.segmentId}
+                key={`${routeRenderKey ?? "route"}:${segment.segmentId}`}
                 coordinates={segment.coordinates}
                 strokeColor={
                   selectedSegmentId === segment.segmentId
@@ -217,10 +220,10 @@ export function FullScreenMap({
             ) : null
           )
         : multi
-        ? routeAlternatives!.map((alt, idx) =>
+        ? routeAlternatives!.map((alt) =>
             alt.coordinates.length > 1 ? (
               <Polyline
-                key={`alt-${idx}`}
+                key={alt.id}
                 coordinates={alt.coordinates}
                 strokeColor={alt.selected ? PRIMARY_LINE : ALT_LINE}
                 strokeWidth={alt.selected ? 7 : 4}

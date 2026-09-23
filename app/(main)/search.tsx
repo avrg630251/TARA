@@ -183,6 +183,7 @@ export default function SearchMapScreen() {
   const [locationReady, setLocationReady] = useState(false);
   const [routePlans, setRoutePlans] = useState<DisplayRoutePlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [hasManuallySelectedRoute, setHasManuallySelectedRoute] = useState(false);
   const [fitMapSignal, setFitMapSignal] = useState(0);
   const [destinationCoord, setDestinationCoord] = useState<LatLng | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -203,6 +204,7 @@ export default function SearchMapScreen() {
   const [selectedSegment, setSelectedSegment] =
     useState<DisplayRouteSegment | null>(null);
   const tripWatchRef = useRef<(() => void) | null>(null);
+  const routeRequestIdRef = useRef(0);
   const accessRequestRef = useRef<{
     planId: string;
     coordinate: LatLng;
@@ -317,10 +319,12 @@ export default function SearchMapScreen() {
   );
 
   const clearRoute = useCallback(() => {
+    routeRequestIdRef.current += 1;
     stopTripWatch();
     setTripActivePlan(null);
     setRoutePlans([]);
     setSelectedPlanId(null);
+    setHasManuallySelectedRoute(false);
     setSearchedOriginCoordinate(null);
     setDestinationCoord(null);
     setRouteError(null);
@@ -430,18 +434,29 @@ export default function SearchMapScreen() {
   const routeAlternativesForMap = useMemo(() => {
     if (!routes.some((r) => r.polyline.length > 1)) return undefined;
     const primaryId = selectedPlanId ?? routes[0]?.id ?? null;
-    const last = routes.filter((r) => r.id === primaryId);
-    const rest = routes.filter((r) => r.id !== primaryId);
-    return [...rest, ...last].map((r) => ({
+    const visibleRoutes = hasManuallySelectedRoute
+      ? routes.filter((r) => r.id === primaryId)
+      : routes;
+    return visibleRoutes.map((r) => ({
+      id: r.id,
       coordinates: r.polyline,
       selected: primaryId != null ? r.id === primaryId : false,
     }));
-  }, [routes, selectedPlanId]);
+  }, [hasManuallySelectedRoute, routes, selectedPlanId]);
 
   const selectedMapPlan = useMemo(
     () => routes.find((route) => route.id === selectedPlanId) ?? routes[0],
     [routes, selectedPlanId]
   );
+
+  const selectRoute = useCallback((routeId: string) => {
+    setSelectedPlanId(routeId);
+    setHasManuallySelectedRoute(true);
+    setAccessPath(null);
+    setAccessDurationMinutes(null);
+    setSelectedSegment(null);
+    setFitMapSignal((n) => n + 1);
+  }, []);
 
   const mapRouteSegments = useMemo(() => {
     const plan = selectedMapPlan;
@@ -450,7 +465,9 @@ export default function SearchMapScreen() {
       ? { latitude: navLatitude, longitude: navLongitude }
       : { latitude, longitude };
     const accessSegment: DisplayRouteSegment | null =
-      plan.boardingCoordinate && accessPath?.length
+      plan.boardingCoordinate &&
+      accessPath?.length &&
+      accessRequestRef.current?.planId === plan.id
       ? {
           segmentId: "dynamic-access-walk",
           segmentType: "walk",
@@ -741,14 +758,14 @@ export default function SearchMapScreen() {
   }
 
   async function buildRoute() {
+    clearRoute();
+    const requestId = routeRequestIdRef.current;
     setHasRouteSearch(true);
     setRouteLoading(true);
     setRouteError(null);
     setActiveInput(null);
     setOriginSuggestions([]);
     setOriginSuggestError(null);
-    setRoutePlans([]);
-    setSelectedPlanId(null);
     try {
         const useGpsOrigin = isDefaultOriginLabel(originLabel);
         if (useGpsOrigin && !originLabel.trim()) {
@@ -787,6 +804,8 @@ export default function SearchMapScreen() {
         latitude: originGeo.lat,
         longitude: originGeo.lng,
       }).catch(() => []);
+
+      if (requestId !== routeRequestIdRef.current) return;
 
       if (customDestinations.length) {
         const customPlans = await Promise.all(
@@ -876,6 +895,7 @@ export default function SearchMapScreen() {
             };
           })
         );
+        if (requestId !== routeRequestIdRef.current) return;
         const orderedPlans = [...customPlans].sort((a, b) => {
           if (filter === "fastest") {
             return (a.etaMinutes ?? Infinity) - (b.etaMinutes ?? Infinity);
@@ -916,6 +936,7 @@ export default function SearchMapScreen() {
         originGeo,
         destGeo
       );
+      if (requestId !== routeRequestIdRef.current) return;
 
       let overview: {
         coordinates: LatLng[];
@@ -925,6 +946,7 @@ export default function SearchMapScreen() {
 
       if (googleItins.length === 0) {
         const r = await getRouteBetween(originGeo, destGeo);
+        if (requestId !== routeRequestIdRef.current) return;
         overview = {
           coordinates: r.coordinates,
           mode: r.mode,
@@ -933,6 +955,7 @@ export default function SearchMapScreen() {
       }
 
       const finalizePlansAndBounds = async (pool: TransitRouteRecord[]) => {
+        if (requestId !== routeRequestIdRef.current) return;
         const rankedPool = [...pool]
           .sort((a, b) => {
             const ca =
@@ -990,6 +1013,7 @@ export default function SearchMapScreen() {
         destinationLng: destGeo.lng,
         stopRadiusMeters: 600,
       });
+      if (requestId !== routeRequestIdRef.current) return;
       const shapeMatches = await fetchGtfsRoutesByShape({
         originLat: originGeo.lat,
         originLng: originGeo.lng,
@@ -997,6 +1021,7 @@ export default function SearchMapScreen() {
         destinationLng: destGeo.lng,
         shapeRadiusMeters: 700,
       });
+      if (requestId !== routeRequestIdRef.current) return;
       const geometryMatches = await fetchGtfsRoutesWithGeometry({
         originLat: originGeo.lat,
         originLng: originGeo.lng,
@@ -1004,6 +1029,7 @@ export default function SearchMapScreen() {
         destinationLng: destGeo.lng,
         shapeRadiusMeters: 700,
       });
+      if (requestId !== routeRequestIdRef.current) return;
 
       const directByRouteId = new Map(
         directMatches.map((route) => [route.route_id, route])
@@ -1022,10 +1048,14 @@ export default function SearchMapScreen() {
 
       await finalizePlansAndBounds(fetched);
     } catch (e: unknown) {
+      if (requestId !== routeRequestIdRef.current) return;
       clearRoute();
       setRouteError(e instanceof Error ? e.message : "Could not load route.");
-    } finally {
       setRouteLoading(false);
+    } finally {
+      if (requestId === routeRequestIdRef.current) {
+        setRouteLoading(false);
+      }
     }
   }
 
@@ -1034,6 +1064,7 @@ export default function SearchMapScreen() {
       <StatusBar style={tripActivePlan ? "light" : "dark"} />
 
       <FullScreenMap
+        key={`route-map-${tripActivePlan?.id ?? selectedMapPlan?.id ?? "empty"}-${hasManuallySelectedRoute ? "selected" : "all"}`}
         latitude={tripActivePlan ? navLatitude : latitude}
         longitude={tripActivePlan ? navLongitude : longitude}
         polylineCoordinates={
@@ -1046,11 +1077,14 @@ export default function SearchMapScreen() {
               : routes[0]?.polyline
         }
         routeAlternatives={
-          tripActivePlan ? undefined : routeAlternativesForMap
+          tripActivePlan || selectedMapPlan?.segments?.length
+            ? undefined
+            : routeAlternativesForMap
         }
         routeSegments={
           mapRouteSegments
         }
+        routeRenderKey={tripActivePlan ? tripActivePlan.id : selectedMapPlan?.id}
         destinationCoordinate={destinationCoord}
         navigationMode={!!tripActivePlan}
         trackedCoordinate={
@@ -1474,8 +1508,7 @@ export default function SearchMapScreen() {
                 >
                   <Pressable
                     onPress={() => {
-                      setSelectedPlanId(r.id);
-                      setFitMapSignal((n) => n + 1);
+                      selectRoute(r.id);
                     }}
                     style={({ pressed }) =>
                       pressed ? styles.routeCardPressablePressed : undefined

@@ -6,6 +6,7 @@ import type { DisplayRouteSegment } from "@/lib/transitPlanOptions";
 import { loadGoogleMapsApi } from "@/lib/googleMapsWebLoader";
 
 export type RouteAlternativePolyline = {
+  id: string;
   coordinates: LatLng[];
   selected: boolean;
 };
@@ -18,6 +19,7 @@ type FullScreenMapProps = {
   polylineCoordinates?: LatLng[];
   routeAlternatives?: RouteAlternativePolyline[];
   routeSegments?: RouteSegmentPolyline[];
+  routeRenderKey?: string | null;
   destinationCoordinate?: LatLng | null;
   fitSignal?: number;
   navigationMode?: boolean;
@@ -63,6 +65,7 @@ export function FullScreenMap({
   polylineCoordinates,
   routeAlternatives,
   routeSegments,
+  routeRenderKey,
   destinationCoordinate,
   fitSignal,
   navigationMode = false,
@@ -245,6 +248,13 @@ export function FullScreenMap({
     } else {
       map.setCenter({ lat: latitude, lng: longitude });
     }
+
+    return () => {
+      for (const pl of polylinesRef.current) pl.setMap(null);
+      polylinesRef.current = [];
+      for (const m of markersRef.current) m.setMap(null);
+      markersRef.current = [];
+    };
   }, [
     latitude,
     longitude,
@@ -257,6 +267,7 @@ export function FullScreenMap({
     trackedCoordinate?.latitude,
     trackedCoordinate?.longitude,
     fitSignal,
+    routeRenderKey,
   ]);
 
   return (
