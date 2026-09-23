@@ -28,6 +28,8 @@ export type RecentTrip = {
   routeName: string;
   boardStop: string;
   offStop: string;
+  fareValue?: number | null;
+  fareText?: string;
   startedAt: string;
 };
 

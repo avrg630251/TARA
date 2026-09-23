@@ -1,10 +1,18 @@
-import { Redirect, Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useEffect } from "react";
 
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function AuthLayout() {
   const { session, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && session) {
+      router.replace("/(main)");
+    }
+  }, [loading, router, session]);
 
   if (loading) {
     return (
@@ -15,7 +23,11 @@ export default function AuthLayout() {
   }
 
   if (session) {
-    return <Redirect href="/(main)" />;
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#1B4332" />
+      </View>
+    );
   }
 
   return (

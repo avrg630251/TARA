@@ -121,6 +121,8 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         routeName: plan.routeName,
         boardStop: plan.boardStop,
         offStop: plan.offStop,
+        fareText: plan.fareText,
+        fareValue: plan.fareValue ?? null,
         startedAt,
       };
       setRecentTrips((prev) => {

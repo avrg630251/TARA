@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Redirect, Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useEffect } from "react";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { TravelProvider } from "@/contexts/TravelContext";
@@ -9,6 +10,13 @@ const GREEN = "#1B4332";
 
 export default function MainLayout() {
   const { session, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !session) {
+      router.replace("/welcome");
+    }
+  }, [loading, router, session]);
 
   if (loading) {
     return (
@@ -19,7 +27,11 @@ export default function MainLayout() {
   }
 
   if (!session) {
-    return <Redirect href="/welcome" />;
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#1B4332" />
+      </View>
+    );
   }
 
   return (

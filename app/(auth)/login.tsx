@@ -1,4 +1,4 @@
-import { Link, useRouter } from "expo-router";
+import { Link } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -14,7 +14,6 @@ import { PasswordField } from "@/components/PasswordField";
 import { supabase } from "@/lib/supabase";
 
 export default function LoginScreen() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +39,6 @@ export default function LoginScreen() {
       return;
     }
 
-    router.replace("/(main)");
   }
 
   return (

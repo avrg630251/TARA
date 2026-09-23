@@ -23,6 +23,7 @@ import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 
 const GREEN = "#1C5141";
+const DEFAULT_SCHOOL = "De La Salle Araneta University";
 
 function fullNameFromUser(user: User | undefined) {
   if (!user) return "";
@@ -41,12 +42,20 @@ function avatarFromUser(user: User | undefined) {
   return typeof avatar === "string" ? avatar : "";
 }
 
+function schoolFromUser(user: User | undefined) {
+  const school = user?.user_metadata?.school_name;
+  return typeof school === "string" && school.trim()
+    ? school.trim()
+    : DEFAULT_SCHOOL;
+}
+
 export default function ProfileScreen() {
   const { session } = useAuth();
   const { bookmarks, recentTrips } = useTravel();
   const router = useRouter();
   const user = session?.user;
   const [name, setName] = useState("");
+  const [school, setSchool] = useState(DEFAULT_SCHOOL);
   const [avatarUrl, setAvatarUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [pickingImage, setPickingImage] = useState(false);
@@ -66,6 +75,7 @@ export default function ProfileScreen() {
       // Auth state is the source of truth after the session finishes loading.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(fullNameFromUser(user));
+      setSchool(schoolFromUser(user));
       setAvatarUrl(avatarFromUser(user));
       setDiscountType(
         user.user_metadata?.discount_type === "discounted" ? "discounted" : "regular"
@@ -77,8 +87,21 @@ export default function ProfileScreen() {
   const canSave = useMemo(
     () =>
       name.trim().length > 0 &&
-      (name.trim() !== fullNameFromUser(user) || avatarUrl !== avatarFromUser(user)),
-    [avatarUrl, name, user]
+      (name.trim() !== fullNameFromUser(user) ||
+        school.trim() !== schoolFromUser(user) ||
+        avatarUrl !== avatarFromUser(user)),
+    [avatarUrl, name, school, user]
+  );
+  const totalFare = useMemo(
+    () =>
+      recentTrips.reduce((total, trip) => {
+        if (typeof trip.fareValue === "number" && Number.isFinite(trip.fareValue)) {
+          return total + trip.fareValue;
+        }
+        const match = trip.fareText?.match(/(?:₱|PHP|Php)\s*([0-9]+(?:\.[0-9]+)?)/i);
+        return total + (match ? Number(match[1]) : 0);
+      }, 0),
+    [recentTrips]
   );
 
   async function chooseProfilePicture() {
@@ -106,8 +129,13 @@ export default function ProfileScreen() {
 
   async function saveProfile() {
     const trimmed = name.trim();
+    const trimmedSchool = school.trim();
     if (!trimmed) {
       Alert.alert("Name required", "Enter a display name to save.");
+      return;
+    }
+    if (!trimmedSchool) {
+      Alert.alert("School required", "Enter your school to save.");
       return;
     }
     setSaving(true);
@@ -130,7 +158,11 @@ export default function ProfileScreen() {
       savedAvatarUrl = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
     }
     const { error } = await supabase.auth.updateUser({
-      data: { full_name: trimmed, avatar_url: savedAvatarUrl || null },
+      data: {
+        full_name: trimmed,
+        school_name: trimmedSchool,
+        avatar_url: savedAvatarUrl || null,
+      },
     });
     setSaving(false);
     if (error) {
@@ -190,7 +222,6 @@ export default function ProfileScreen() {
     setSigningOut(true);
     await supabase.auth.signOut();
     setSigningOut(false);
-    router.replace("/welcome");
   }
 
   return (
@@ -217,13 +248,13 @@ export default function ProfileScreen() {
             </View>
           </Pressable>
           <Text style={styles.heroName}>{displayName}</Text>
-          <Text style={styles.heroSchool}>De La Salle Araneta University</Text>
+          <Text style={styles.heroSchool}>{school}</Text>
         </View>
 
         <View style={styles.statsCard}>
           <Stat value={recentTrips.length} label="Trips taken" />
           <Stat value={bookmarks.length} label="Saved routes" />
-          <Stat value="₱430" label="Total fare" />
+          <Stat value={`₱${totalFare.toFixed(2)}`} label="Total fare" />
         </View>
 
         <Text style={styles.sectionLabel}>Account</Text>
@@ -264,6 +295,15 @@ export default function ProfileScreen() {
               value={name}
               onChangeText={setName}
               placeholder="Your name"
+              placeholderTextColor="#8b9a94"
+              autoCapitalize="words"
+            />
+            <Text style={styles.modalFieldLabel}>School</Text>
+            <TextInput
+              style={styles.input}
+              value={school}
+              onChangeText={setSchool}
+              placeholder={DEFAULT_SCHOOL}
               placeholderTextColor="#8b9a94"
               autoCapitalize="words"
             />
@@ -403,6 +443,7 @@ const styles = StyleSheet.create({
   menuIcon: { width: 32, alignItems: "flex-start" },
   menuText: { flex: 1, color: "#26312c", fontSize: 14 },
   input: { borderWidth: 1, borderColor: "#d4ded9", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 11, color: "#17221e", fontSize: 16 },
+  modalFieldLabel: { color: "#68756f", fontSize: 13, fontWeight: "600", marginTop: 14, marginBottom: 6 },
   passwordConfirmInput: { marginTop: 12 },
   email: { color: "#77837e", fontSize: 12, marginTop: 8 },
   passwordHint: { color: "#77837e", fontSize: 12, marginTop: 8 },

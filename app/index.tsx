@@ -1,24 +1,24 @@
-import { Redirect } from "expo-router";
+import { useRouter } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useEffect } from "react";
 
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function Index() {
   const { session, loading } = useAuth();
+  const router = useRouter();
 
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#1B4332" />
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (!loading) {
+      router.replace(session ? "/(main)" : "/welcome");
+    }
+  }, [loading, router, session]);
 
-  if (session) {
-    return <Redirect href="/(main)" />;
-  }
-
-  return <Redirect href="/welcome" />;
+  return (
+    <View style={styles.centered}>
+      <ActivityIndicator size="large" color="#1B4332" />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
