@@ -92,7 +92,7 @@ export type FareQuote = {
   currency: string;
 };
 
-const REGULAR_PER_LEG_PHP = 13;
+const REGULAR_PER_LEG_PHP = 14;
 const DISCOUNT_RATE = 0.2;
 
 function isDiscountPassenger(code: DiscountCode): boolean {

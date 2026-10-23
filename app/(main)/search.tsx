@@ -20,6 +20,10 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
+import {
+  AndroidPlaceAutocomplete,
+  type AndroidPlaceAutocompleteHandle,
+} from "@/components/AndroidPlaceAutocomplete";
 import { FullScreenMap } from "@/components/FullScreenMap";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
@@ -64,6 +68,10 @@ const DLSAU_COORDINATE: LatLng = {
 const DB_MATCH_POOL_LIMIT = 20;
 const MAX_ROUTE_RADIUS_METERS = 500_000;
 type ActiveInput = "origin" | "destination" | null;
+type RouteComparison = {
+  comparedRouteId: string;
+  baselineRouteId: string;
+};
 
 function isDefaultOriginLabel(label: string) {
   const t = label.trim().toLowerCase();
@@ -107,39 +115,61 @@ function formatCurrency(amount: number, currency: string) {
   return `${currency} ${amount.toFixed(2)}`;
 }
 
-function coordinateDistance(a: LatLng, b: LatLng): number {
-  const dLat = a.latitude - b.latitude;
-  const dLng = a.longitude - b.longitude;
-  return dLat * dLat + dLng * dLng;
-}
-
 function routeSegmentsForLocation(
   segments: DisplayRouteSegment[],
   location: LatLng
 ): DisplayRouteSegment[] {
   let closestSegment = -1;
   let closestCoordinate = -1;
+  let closestPoint: LatLng | null = null;
   let closestDistance = Number.POSITIVE_INFINITY;
 
   segments.forEach((segment, segmentIndex) => {
-    if (segment.segmentType === "walk" && segmentIndex === 0) return;
-    segment.coordinates.forEach((coordinate, coordinateIndex) => {
-      const distance = coordinateDistance(location, coordinate);
+    for (let coordinateIndex = 0; coordinateIndex < segment.coordinates.length - 1; coordinateIndex += 1) {
+      const start = segment.coordinates[coordinateIndex];
+      const end = segment.coordinates[coordinateIndex + 1];
+      const longitudeScale = Math.cos((location.latitude * Math.PI) / 180);
+      const startX = (start.longitude - location.longitude) * longitudeScale;
+      const startY = start.latitude - location.latitude;
+      const endX = (end.longitude - location.longitude) * longitudeScale;
+      const endY = end.latitude - location.latitude;
+      const dx = endX - startX;
+      const dy = endY - startY;
+      const denominator = dx * dx + dy * dy;
+      const ratio =
+        denominator === 0
+          ? 0
+          : Math.max(0, Math.min(1, -(startX * dx + startY * dy) / denominator));
+      const candidate = {
+        latitude: start.latitude + (end.latitude - start.latitude) * ratio,
+        longitude: start.longitude + (end.longitude - start.longitude) * ratio,
+      };
+      const distanceX = (candidate.longitude - location.longitude) * longitudeScale;
+      const distanceY = candidate.latitude - location.latitude;
+      const distance = distanceX * distanceX + distanceY * distanceY;
       if (distance < closestDistance) {
         closestDistance = distance;
         closestSegment = segmentIndex;
         closestCoordinate = coordinateIndex;
+        closestPoint = candidate;
       }
-    });
+    }
   });
 
-  if (closestSegment < 0 || closestCoordinate < 0) return segments;
+  if (
+    closestSegment < 0 ||
+    closestCoordinate < 0 ||
+    !closestPoint
+  ) {
+    return segments;
+  }
+  const trimPoint = closestPoint;
 
   return segments.slice(closestSegment).map((segment, index) => ({
     ...segment,
     coordinates:
       index === 0
-        ? segment.coordinates.slice(closestCoordinate)
+        ? [trimPoint, ...segment.coordinates.slice(closestCoordinate + 1)]
         : segment.coordinates,
   }));
 }
@@ -175,7 +205,9 @@ export default function SearchMapScreen() {
   const [originSuggestions, setOriginSuggestions] = useState<PlaceSuggestion[]>([]);
   const [originSuggestLoading, setOriginSuggestLoading] = useState(false);
   const [originSuggestError, setOriginSuggestError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<RouteFilter>("cheapest");
+  const androidAutocompleteRef =
+    useRef<AndroidPlaceAutocompleteHandle>(null);
+  const [filter, setFilter] = useState<RouteFilter>("all");
   const [latitude, setLatitude] = useState(FALLBACK_LAT);
   const [longitude, setLongitude] = useState(FALLBACK_LNG);
   const [searchedOriginCoordinate, setSearchedOriginCoordinate] =
@@ -184,6 +216,8 @@ export default function SearchMapScreen() {
   const [routePlans, setRoutePlans] = useState<DisplayRoutePlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [hasManuallySelectedRoute, setHasManuallySelectedRoute] = useState(false);
+  const [routeComparison, setRouteComparison] =
+    useState<RouteComparison | null>(null);
   const [fitMapSignal, setFitMapSignal] = useState(0);
   const [destinationCoord, setDestinationCoord] = useState<LatLng | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -233,11 +267,11 @@ export default function SearchMapScreen() {
     const orig = pickSearchParam(params.origin);
     if (!dest && !orig) return;
     if (orig) setOriginLabel(orig);
-    router.setParams({ origin: undefined, destination: undefined });
 
     const hasDefinedRoute = Boolean(orig || dest);
     if (hasDefinedRoute) {
       const timer = setTimeout(() => {
+        router.setParams({ origin: undefined, destination: undefined });
         void buildRoute();
       }, 150);
       return () => clearTimeout(timer);
@@ -321,6 +355,9 @@ export default function SearchMapScreen() {
   const clearRoute = useCallback(() => {
     routeRequestIdRef.current += 1;
     stopTripWatch();
+    setRouteLoading(false);
+    setOriginSuggestLoading(false);
+    setRouteComparison(null);
     setTripActivePlan(null);
     setRoutePlans([]);
     setSelectedPlanId(null);
@@ -334,6 +371,7 @@ export default function SearchMapScreen() {
   useEffect(() => {
     if (activeInput !== "origin") return;
     if (isDefaultOriginLabel(originLabel) || originLabel.trim().length < 2) {
+      setOriginSuggestLoading(false);
       setOriginSuggestions([]);
       setOriginSuggestError(null);
       return;
@@ -342,6 +380,14 @@ export default function SearchMapScreen() {
     let cancelled = false;
     setOriginSuggestLoading(true);
     const timer = setTimeout(async () => {
+      if (Platform.OS === "android") {
+        androidAutocompleteRef.current?.setQuery(
+          originLabel,
+          latitude,
+          longitude
+        );
+        return;
+      }
       try {
         const list = await getPlaceSuggestions(originLabel, {
           limit: 3,
@@ -434,32 +480,65 @@ export default function SearchMapScreen() {
   const routeAlternativesForMap = useMemo(() => {
     if (!routes.some((r) => r.polyline.length > 1)) return undefined;
     const primaryId = selectedPlanId ?? routes[0]?.id ?? null;
-    const visibleRoutes = hasManuallySelectedRoute
-      ? routes.filter((r) => r.id === primaryId)
-      : routes;
+    const visibleRoutes = routes;
     return visibleRoutes.map((r) => ({
       id: r.id,
       coordinates: r.polyline,
       selected: primaryId != null ? r.id === primaryId : false,
     }));
-  }, [hasManuallySelectedRoute, routes, selectedPlanId]);
+  }, [routes, selectedPlanId]);
 
   const selectedMapPlan = useMemo(
     () => routes.find((route) => route.id === selectedPlanId) ?? routes[0],
     [routes, selectedPlanId]
   );
 
+  const comparisonDetails = useMemo(() => {
+    if (filter !== "all" || !routeComparison) return null;
+    const comparedRoute = routes.find(
+      (route) => route.id === routeComparison.comparedRouteId
+    );
+    const baselineRoute = routes.find(
+      (route) => route.id === routeComparison.baselineRouteId
+    );
+    if (!comparedRoute || !baselineRoute) return null;
+
+    const fareDifference =
+      comparedRoute.fareValue != null && baselineRoute.fareValue != null
+        ? comparedRoute.fareValue - baselineRoute.fareValue
+        : null;
+    const timeDifference =
+      comparedRoute.etaMinutes != null && baselineRoute.etaMinutes != null
+        ? comparedRoute.etaMinutes - baselineRoute.etaMinutes
+        : null;
+
+    return { comparedRoute, baselineRoute, fareDifference, timeDifference };
+  }, [filter, routeComparison, routes]);
+
   const selectRoute = useCallback((routeId: string) => {
+    const previousRouteId = selectedPlanId ?? routes[0]?.id ?? null;
+    if (
+      filter === "all" &&
+      previousRouteId &&
+      previousRouteId !== routeId
+    ) {
+      setRouteComparison({
+        comparedRouteId: routeId,
+        baselineRouteId: previousRouteId,
+      });
+    } else if (filter !== "all") {
+      setRouteComparison(null);
+    }
     setSelectedPlanId(routeId);
     setHasManuallySelectedRoute(true);
     setAccessPath(null);
     setAccessDurationMinutes(null);
     setSelectedSegment(null);
     setFitMapSignal((n) => n + 1);
-  }, []);
+  }, [filter, routes, selectedPlanId]);
 
   const mapRouteSegments = useMemo(() => {
-    const plan = selectedMapPlan;
+    const plan = tripActivePlan ?? selectedMapPlan;
     if (!plan?.segments?.length) return undefined;
     const currentLocation = tripActivePlan
       ? { latitude: navLatitude, longitude: navLongitude }
@@ -760,7 +839,16 @@ export default function SearchMapScreen() {
   async function buildRoute() {
     clearRoute();
     const requestId = routeRequestIdRef.current;
+    const loadingTimeout = setTimeout(() => {
+      if (requestId !== routeRequestIdRef.current) return;
+      routeRequestIdRef.current += 1;
+      setRouteLoading(false);
+      setRouteError(
+        "Route search timed out. Check your connection and try again."
+      );
+    }, 30000);
     setHasRouteSearch(true);
+    setFilter("all");
     setRouteLoading(true);
     setRouteError(null);
     setActiveInput(null);
@@ -911,7 +999,6 @@ export default function SearchMapScreen() {
         setRoutePlans(scheduleOrderedPlans);
         setSelectedPlanId(selectedPlan?.id ?? null);
         setFitMapSignal((n) => n + 1);
-        snapSheet(true);
         return;
       }
 
@@ -1003,7 +1090,6 @@ export default function SearchMapScreen() {
         setRoutePlans(plans);
         setSelectedPlanId(plans[0]?.id ?? null);
         setFitMapSignal((n) => n + 1);
-        snapSheet(true);
       };
 
       const directMatches = await fetchGtfsRoutesBetweenPoints({
@@ -1053,6 +1139,7 @@ export default function SearchMapScreen() {
       setRouteError(e instanceof Error ? e.message : "Could not load route.");
       setRouteLoading(false);
     } finally {
+      clearTimeout(loadingTimeout);
       if (requestId === routeRequestIdRef.current) {
         setRouteLoading(false);
       }
@@ -1061,6 +1148,16 @@ export default function SearchMapScreen() {
 
   return (
     <View style={styles.root}>
+      {Platform.OS === "android" ? (
+        <AndroidPlaceAutocomplete
+          ref={androidAutocompleteRef}
+          onSuggestions={(suggestions, error) => {
+            setOriginSuggestions(suggestions);
+            setOriginSuggestError(error ?? null);
+            setOriginSuggestLoading(false);
+          }}
+        />
+      ) : null}
       <StatusBar style={tripActivePlan ? "light" : "dark"} />
 
       <FullScreenMap
@@ -1069,15 +1166,13 @@ export default function SearchMapScreen() {
         longitude={tripActivePlan ? navLongitude : longitude}
         polylineCoordinates={
           tripActivePlan
-            ? tripActivePlan.polyline.length > 1
-              ? tripActivePlan.polyline
-              : undefined
+            ? undefined
             : routeAlternativesForMap?.length
               ? undefined
               : routes[0]?.polyline
         }
         routeAlternatives={
-          tripActivePlan || selectedMapPlan?.segments?.length
+          tripActivePlan || filter !== "all"
             ? undefined
             : routeAlternativesForMap
         }
@@ -1130,6 +1225,53 @@ export default function SearchMapScreen() {
           <Pressable onPress={() => setSelectedSegment(null)}>
             <Text style={styles.segmentPopupClose}>Close</Text>
           </Pressable>
+        </View>
+      ) : null}
+
+      {comparisonDetails ? (
+        <View style={styles.routeComparisonPopup}>
+          <View style={styles.routeComparisonHeader}>
+            <View style={styles.routeComparisonHeaderText}>
+              <Text style={styles.routeComparisonTitle}>
+                Compared with {comparisonDetails.baselineRoute.routeName}
+              </Text>
+              <Text style={styles.routeComparisonRoute} numberOfLines={1}>
+                {comparisonDetails.comparedRoute.routeName}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => setRouteComparison(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Close route comparison"
+              hitSlop={8}
+            >
+              <Ionicons name="close" size={20} color="#495057" />
+            </Pressable>
+          </View>
+          {comparisonDetails.fareDifference !== null &&
+          comparisonDetails.fareDifference !== 0 ? (
+            <Text style={styles.routeComparisonLine}>
+              {comparisonDetails.fareDifference < 0
+                ? `Cheaper by ₱${Math.abs(comparisonDetails.fareDifference).toFixed(2)}`
+                : `More expensive by ₱${comparisonDetails.fareDifference.toFixed(2)}`}
+            </Text>
+          ) : null}
+          {comparisonDetails.timeDifference !== null &&
+          comparisonDetails.timeDifference !== 0 ? (
+            <Text style={styles.routeComparisonLine}>
+              {comparisonDetails.timeDifference < 0
+                ? `Faster by ${Math.abs(comparisonDetails.timeDifference)} min`
+                : `Slower by ${comparisonDetails.timeDifference} min`}
+            </Text>
+          ) : null}
+          {(!comparisonDetails.fareDifference ||
+            comparisonDetails.fareDifference === 0) &&
+          (!comparisonDetails.timeDifference ||
+            comparisonDetails.timeDifference === 0) ? (
+            <Text style={styles.routeComparisonLine}>
+              Similar fare and travel time
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
@@ -1423,11 +1565,6 @@ export default function SearchMapScreen() {
         <View
           style={styles.sheetDragHeader}
           {...sheetPanResponder.panHandlers}
-          accessible
-          accessibilityRole="button"
-          accessibilityLabel={
-            sheetExpanded ? "Collapse available routes panel" : "Expand available routes panel"
-          }
         >
           <Pressable
             style={styles.grabberHitbox}
@@ -1504,7 +1641,11 @@ export default function SearchMapScreen() {
               return (
                 <View
                   key={r.id}
-                  style={[styles.routeCard, isSelected && styles.routeCardSelected]}
+                  style={[
+                    styles.routeCard,
+                    filter === "all" && !isSelected && styles.routeCardMuted,
+                    isSelected && styles.routeCardSelected,
+                  ]}
                 >
                   <Pressable
                     onPress={() => {
@@ -1856,8 +1997,53 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: "#f1f7f3",
   },
+  routeCardMuted: {
+    borderColor: "#cbd5e1",
+    backgroundColor: "#f1f3f5",
+    opacity: 0.72,
+  },
   routeCardPressablePressed: {
     opacity: 0.92,
+  },
+  routeComparisonPopup: {
+    position: "absolute",
+    top: 116,
+    left: 16,
+    right: 16,
+    zIndex: 5,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+  },
+  routeComparisonHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  routeComparisonHeaderText: {
+    flex: 1,
+  },
+  routeComparisonTitle: {
+    color: "#334155",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  routeComparisonRoute: {
+    color: GREEN,
+    fontSize: 14,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  routeComparisonLine: {
+    color: "#495057",
+    fontSize: 13,
+    marginTop: 7,
   },
   routeStopLine: {
     fontSize: 13,

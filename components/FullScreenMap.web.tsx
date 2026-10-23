@@ -139,6 +139,31 @@ export function FullScreenMap({
       const colors = ["#0B3D2E", "#0B4F8A", "#7A1FA2", "#B54708", "#8A1538"];
       return colors[index % colors.length];
     };
+    if (hasAlts) {
+      for (const alt of routeAlternatives ?? []) {
+        if (alt.coordinates.length < 2) continue;
+        const polyline = new g.maps.Polyline({
+          map,
+          path: alt.coordinates.map((c: LatLng) => ({
+            lat: c.latitude,
+            lng: c.longitude,
+          })),
+          strokeColor: alt.selected ? PRIMARY_LINE : ALT_LINE,
+          strokeOpacity: 1,
+          strokeWeight: alt.selected ? 7 : 4,
+        });
+        polylinesRef.current.push(polyline);
+      }
+    } else if (!routeSegments?.length && polylineCoordinates && polylineCoordinates.length > 1) {
+      const polyline = new g.maps.Polyline({
+        map,
+        path: polylineCoordinates.map((c) => ({ lat: c.latitude, lng: c.longitude })),
+        strokeColor: PRIMARY_LINE,
+        strokeOpacity: 1,
+        strokeWeight: navigationMode ? 7 : 6,
+      });
+      polylinesRef.current.push(polyline);
+    }
     if (routeSegments?.length) {
       for (const [index, segment] of routeSegments.entries()) {
         if (segment.coordinates.length < 2) continue;
@@ -186,30 +211,6 @@ export function FullScreenMap({
         polyline.addListener("click", () => onSegmentPress?.(segment));
         polylinesRef.current.push(polyline);
       }
-    } else if (hasAlts) {
-      for (const alt of routeAlternatives ?? []) {
-        if (alt.coordinates.length < 2) continue;
-        const polyline = new g.maps.Polyline({
-          map,
-          path: alt.coordinates.map((c: LatLng) => ({
-            lat: c.latitude,
-            lng: c.longitude,
-          })),
-          strokeColor: alt.selected ? PRIMARY_LINE : ALT_LINE,
-          strokeOpacity: 1,
-          strokeWeight: alt.selected ? 7 : 4,
-        });
-        polylinesRef.current.push(polyline);
-      }
-    } else if (polylineCoordinates && polylineCoordinates.length > 1) {
-      const polyline = new g.maps.Polyline({
-        map,
-        path: polylineCoordinates.map((c) => ({ lat: c.latitude, lng: c.longitude })),
-        strokeColor: PRIMARY_LINE,
-        strokeOpacity: 1,
-        strokeWeight: navigationMode ? 7 : 6,
-      });
-      polylinesRef.current.push(polyline);
     }
 
     if (destinationCoordinate) {

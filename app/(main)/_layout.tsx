@@ -54,7 +54,7 @@ export default function MainLayout() {
           options={{
             title: "Home",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="home" size={size ?? 22} color={color} />
+              <Ionicons name="home" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />
@@ -63,7 +63,7 @@ export default function MainLayout() {
           options={{
             title: "Search",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="compass-outline" size={size ?? 24} color={color} />
+              <Ionicons name="compass-outline" size={size ?? 24} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />
@@ -72,7 +72,7 @@ export default function MainLayout() {
           options={{
             title: "History",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="time-outline" size={size ?? 22} color={color} />
+              <Ionicons name="time-outline" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />
@@ -81,7 +81,7 @@ export default function MainLayout() {
           options={{
             title: "Profile",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="person-outline" size={size ?? 24} color={color} />
+              <Ionicons name="person-outline" size={size ?? 24} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />

@@ -26,8 +26,8 @@ as $$
   calc as (
     select
       p_route_id as rid,
-      (13 * n)::numeric as reg_total,
-      (13 * n * 0.8)::numeric as disc_total,
+      (14 * n)::numeric as reg_total,
+      (14 * n * 0.8)::numeric as disc_total,
       n
     from legs
   )

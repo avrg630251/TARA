@@ -8,6 +8,24 @@ export type PlaceSuggestion = {
   secondaryText: string;
 };
 
+async function fetchWithTimeout(
+  input: string,
+  timeoutMs = 12000
+): Promise<Response> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error("Google Maps request timed out. Check your connection.")),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([fetch(input), timeout]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
 function getKey(): string {
   const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
   if (!key) {
@@ -55,7 +73,7 @@ export async function geocodeAddress(
   url.searchParams.set("address", trimmed);
   url.searchParams.set("key", key);
 
-  const res = await fetch(url.toString());
+  const res = await fetchWithTimeout(url.toString());
   const data = (await res.json()) as {
     status: string;
     error_message?: string;
@@ -93,8 +111,7 @@ export async function getPlaceSuggestions(
     url.searchParams.set("radius", "30000");
   }
 
-  const res = await fetch(url.toString());
-  const data = (await res.json()) as {
+  let data: {
     status: string;
     error_message?: string;
     predictions?: {
@@ -106,18 +123,71 @@ export async function getPlaceSuggestions(
       };
     }[];
   };
-
-  if (data.status === "ZERO_RESULTS") return [];
-  if (data.status !== "OK") {
-    throw new Error(directionsStatusMessage(data.status, data.error_message));
+  try {
+    const res = await fetchWithTimeout(url.toString());
+    data = (await res.json()) as typeof data;
+  } catch (error) {
+    data = {
+      status: "REQUEST_FAILED",
+      error_message: error instanceof Error ? error.message : undefined,
+    };
   }
 
-  return (data.predictions ?? []).slice(0, opts?.limit ?? 3).map((p) => ({
-    placeId: p.place_id,
-    description: p.description,
-    mainText: p.structured_formatting?.main_text ?? p.description,
-    secondaryText: p.structured_formatting?.secondary_text ?? "",
-  }));
+  if (data.status === "OK" && data.predictions?.length) {
+    return data.predictions.slice(0, opts?.limit ?? 3).map((p) => ({
+      placeId: p.place_id,
+      description: p.description,
+      mainText: p.structured_formatting?.main_text ?? p.description,
+      secondaryText: p.structured_formatting?.secondary_text ?? "",
+    }));
+  }
+
+  // The legacy Places Autocomplete REST endpoint is not consistently
+  // available to Expo Go clients. Fall back to geocoding so a typed address
+  // remains selectable and can be resolved by the route search.
+  const geocodeUrl = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+  geocodeUrl.searchParams.set("address", trimmed);
+  geocodeUrl.searchParams.set("key", key);
+  const geocodeResponse = await fetchWithTimeout(geocodeUrl.toString());
+  const geocodeData = (await geocodeResponse.json()) as {
+    status: string;
+    error_message?: string;
+    results?: {
+      formatted_address?: string;
+      geometry?: { location?: { lat?: number; lng?: number } };
+    }[];
+  };
+  const result = geocodeData.results?.[0];
+  const location = result?.geometry?.location;
+  const lat = location?.lat;
+  const lng = location?.lng;
+  if (
+    geocodeData.status === "OK" &&
+    result?.formatted_address &&
+    typeof lat === "number" &&
+    Number.isFinite(lat) &&
+    typeof lng === "number" &&
+    Number.isFinite(lng)
+  ) {
+    return [
+      {
+        placeId: `geocode:${lat},${lng}`,
+        description: result.formatted_address,
+        mainText: result.formatted_address,
+        secondaryText: "Use this location",
+      },
+    ];
+  }
+
+  if (data.status === "ZERO_RESULTS" || geocodeData.status === "ZERO_RESULTS") {
+    return [];
+  }
+  throw new Error(
+    directionsStatusMessage(
+      data.status,
+      data.error_message ?? geocodeData.error_message
+    )
+  );
 }
 
 export type RouteResult = {
@@ -231,7 +301,7 @@ export async function fetchTransitItinerariesFromGoogle(
       }
 
       try {
-        const res = await fetch(url.toString());
+        const res = await fetchWithTimeout(url.toString());
         const data = (await res.json()) as {
           status: string;
           error_message?: string;
@@ -276,7 +346,7 @@ export async function getRouteBetween(
       url.searchParams.set("departure_time", "now");
     }
 
-    const res = await fetch(url.toString());
+    const res = await fetchWithTimeout(url.toString());
     const data = (await res.json()) as {
       status: string;
       error_message?: string;
@@ -345,7 +415,7 @@ export async function getWalkingRouteBetween(
   url.searchParams.set("mode", "walking");
   url.searchParams.set("key", key);
 
-  const res = await fetch(url.toString());
+  const res = await fetchWithTimeout(url.toString());
   const data = (await res.json()) as {
     status: string;
     error_message?: string;
@@ -369,7 +439,7 @@ export async function getTravelDurationSeconds(
   url.searchParams.set("destination", `${destination.lat},${destination.lng}`);
   url.searchParams.set("mode", mode);
   url.searchParams.set("key", key);
-  const res = await fetch(url.toString());
+  const res = await fetchWithTimeout(url.toString());
   const data = (await res.json()) as {
     status: string;
     error_message?: string;
