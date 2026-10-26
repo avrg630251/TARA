@@ -182,15 +182,20 @@ export async function fetchNearestCustomItinerary(
       destination: destination as CustomRoutePoint,
       segments: orderedSegments,
       coordinates,
-      fare: orderedSegments.every(
-        (segment) => segment.segment_type === "walk" || segment.fare != null
-      )
-        ? orderedSegments.reduce(
-            (total, segment) =>
-              total + (segment.segment_type === "walk" ? 0 : segment.fare ?? 0),
-            0
-          )
-        : null,
+      fare: orderedSegments.reduce(
+        (total, segment) => {
+          if (segment.segment_type === "walk") return total;
+          const legFare =
+            segment.fare ??
+            (segment.segment_type === "tricycle"
+              ? 15
+              : segment.segment_type === "bus"
+                ? 35
+                : 14);
+          return total + Math.ceil(legFare);
+        },
+        0
+      ),
     });
   }
 

@@ -16,6 +16,7 @@ import {
   Text,
   TextInput,
   useWindowDimensions,
+  Vibration,
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,6 +39,7 @@ import {
 } from "@/lib/googleMapsRoutes";
 import {
   type ClassScheduleItem,
+  getNextClassInfo,
   loadClassSchedules,
   sortRoutesForSchedule,
 } from "@/lib/classSchedules";
@@ -50,12 +52,13 @@ import { fetchNearestCustomItinerary } from "@/lib/customRouteItineraries";
 import { type RouteFilter } from "@/lib/mockTransitRoutes";
 import {
   computeFlatFareForTrip,
-  fetchGtfsRoutesBetweenPoints,
-  fetchGtfsRoutesByShape,
-  fetchGtfsRoutesWithGeometry,
+  BUS_BASE_FARE_PHP,
+  computeJeepneyFare,
+  TRICYCLE_SHARED_FARE_PHP,
+  TRICYCLE_SOLO_FARE_PHP,
   type DiscountCode,
-  type TransitRouteRecord,
 } from "@/lib/transitRoutes";
+import { speakTripNotification, stopTripSpeech } from "@/lib/voiceAnnouncer";
 
 const GREEN = "#1B4332";
 const FALLBACK_LAT = 14.5995;
@@ -65,14 +68,24 @@ const DLSAU_COORDINATE: LatLng = {
   latitude: 14.670567,
   longitude: 120.999293,
 };
-const DB_MATCH_POOL_LIMIT = 20;
 const MAX_ROUTE_RADIUS_METERS = 500_000;
-type ActiveInput = "origin" | "destination" | null;
-type RouteComparison = {
-  comparedRouteId: string;
-  baselineRouteId: string;
-};
+const CUSTOM_ROUTE_DATA_TIMEOUT_MS = 7000;
 
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  });
+}
+
+type ActiveInput = "origin" | "destination" | null;
 function isDefaultOriginLabel(label: string) {
   const t = label.trim().toLowerCase();
   return !t || t === "your location" || t === "current location";
@@ -107,25 +120,70 @@ function polylineDistanceMeters(points: LatLng[]) {
       { lat: points[index].latitude, lng: points[index].longitude }
     );
   }
+
   return total;
 }
 
+function closestRouteCoordinate(points: LatLng[], location: LatLng): LatLng | undefined {
+  return points.reduce<LatLng | undefined>((closest, point) => {
+    if (!closest) return point;
+    const currentDistance = haversineMeters(
+      { lat: point.latitude, lng: point.longitude },
+      { lat: location.latitude, lng: location.longitude }
+    );
+    const closestDistance = haversineMeters(
+      { lat: closest.latitude, lng: closest.longitude },
+      { lat: location.latitude, lng: location.longitude }
+    );
+    return currentDistance < closestDistance ? point : closest;
+  }, undefined);
+}
+
 function formatCurrency(amount: number, currency: string) {
-  if (currency.toUpperCase() === "PHP") return `Php ${amount.toFixed(2)}`;
-  return `${currency} ${amount.toFixed(2)}`;
+  const rounded = Math.ceil(amount);
+  if (currency.toUpperCase() === "PHP") return `Php ${rounded.toFixed(2)}`;
+  return `${currency} ${rounded.toFixed(2)}`;
+}
+
+function fareForSegment(
+  segment: DisplayRouteSegment,
+  tricycleMode: "shared" | "solo" = "shared"
+): number {
+  if (segment.segmentType === "walk") return 0;
+  if (segment.segmentType === "tricycle") {
+    return tricycleMode === "solo"
+      ? TRICYCLE_SOLO_FARE_PHP
+      : TRICYCLE_SHARED_FARE_PHP;
+  }
+  if (segment.segmentType === "bus") return BUS_BASE_FARE_PHP;
+  return Math.ceil(computeJeepneyFare(polylineDistanceMeters(segment.coordinates)));
 }
 
 function routeSegmentsForLocation(
   segments: DisplayRouteSegment[],
-  location: LatLng
+  location: LatLng,
+  progressRef?: { segmentIndex: number; coordinateIndex: number }
 ): DisplayRouteSegment[] {
+  if (!segments || segments.length === 0) return [];
+
+  const startSegment = progressRef
+    ? Math.min(progressRef.segmentIndex, segments.length - 1)
+    : 0;
   let closestSegment = -1;
   let closestCoordinate = -1;
   let closestPoint: LatLng | null = null;
   let closestDistance = Number.POSITIVE_INFINITY;
 
-  segments.forEach((segment, segmentIndex) => {
-    for (let coordinateIndex = 0; coordinateIndex < segment.coordinates.length - 1; coordinateIndex += 1) {
+  for (let sIdx = startSegment; sIdx < segments.length; sIdx++) {
+    const segment = segments[sIdx];
+    const startCoord =
+      sIdx === startSegment && progressRef ? progressRef.coordinateIndex : 0;
+
+    for (
+      let coordinateIndex = startCoord;
+      coordinateIndex < segment.coordinates.length - 1;
+      coordinateIndex += 1
+    ) {
       const start = segment.coordinates[coordinateIndex];
       const end = segment.coordinates[coordinateIndex + 1];
       const longitudeScale = Math.cos((location.latitude * Math.PI) / 180);
@@ -149,12 +207,12 @@ function routeSegmentsForLocation(
       const distance = distanceX * distanceX + distanceY * distanceY;
       if (distance < closestDistance) {
         closestDistance = distance;
-        closestSegment = segmentIndex;
+        closestSegment = sIdx;
         closestCoordinate = coordinateIndex;
         closestPoint = candidate;
       }
     }
-  });
+  }
 
   if (
     closestSegment < 0 ||
@@ -163,15 +221,43 @@ function routeSegmentsForLocation(
   ) {
     return segments;
   }
-  const trimPoint = closestPoint;
 
-  return segments.slice(closestSegment).map((segment, index) => ({
-    ...segment,
-    coordinates:
-      index === 0
-        ? [trimPoint, ...segment.coordinates.slice(closestCoordinate + 1)]
-        : segment.coordinates,
-  }));
+  // Update progress forward so passed route segments never reappear
+  if (progressRef) {
+    if (
+      closestSegment > progressRef.segmentIndex ||
+      (closestSegment === progressRef.segmentIndex &&
+        closestCoordinate >= progressRef.coordinateIndex)
+    ) {
+      progressRef.segmentIndex = closestSegment;
+      progressRef.coordinateIndex = closestCoordinate;
+    }
+  }
+
+  const trimPoint = closestPoint;
+  const trimmed: DisplayRouteSegment[] = [];
+
+  for (let sIdx = closestSegment; sIdx < segments.length; sIdx++) {
+    const segment = segments[sIdx];
+    if (sIdx === closestSegment) {
+      const remainingCoords = [
+        trimPoint,
+        ...segment.coordinates.slice(closestCoordinate + 1),
+      ];
+      if (remainingCoords.length >= 2) {
+        trimmed.push({
+          ...segment,
+          coordinates: remainingCoords,
+        });
+      }
+    } else {
+      if (segment.coordinates.length >= 2) {
+        trimmed.push(segment);
+      }
+    }
+  }
+
+  return trimmed;
 }
 
 function pickSearchParam(value: string | string[] | undefined): string | undefined {
@@ -187,14 +273,37 @@ export default function SearchMapScreen() {
   const { isBookmarked, toggleBookmark, addRecentFromTrip } = useTravel();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const expandedSheetHeight = Math.min(
-    Math.max(windowHeight * 0.72, 430),
-    windowHeight * 0.84
-  );
+  const [sheetContentHeight, setSheetContentHeight] = useState<number | null>(null);
+
+  const handleContentLayout = useCallback((height: number) => {
+    const rounded = Math.ceil(height);
+    if (rounded > 40) {
+      setSheetContentHeight((prev) => {
+        if (prev != null && Math.abs(prev - rounded) < 4) {
+          return prev;
+        }
+        return rounded;
+      });
+    }
+  }, []);
+
   const collapsedSheetHeight = Math.min(
     Math.max(windowHeight * 0.26, 220),
-    windowHeight * 0.42
+    windowHeight * 0.38
   );
+  const maxAllowedSheetHeight = Math.min(
+    windowHeight * 0.78,
+    Math.max(collapsedSheetHeight + 80, windowHeight - insets.top - 90)
+  );
+  const expandedSheetHeight = sheetContentHeight
+    ? Math.min(
+        maxAllowedSheetHeight,
+        Math.max(collapsedSheetHeight + 40, sheetContentHeight + 66 + insets.bottom)
+      )
+    : Math.min(
+        maxAllowedSheetHeight,
+        Math.max(windowHeight * 0.52, 400)
+      );
   const maxSheetTranslateY = Math.max(0, expandedSheetHeight - collapsedSheetHeight);
   const sheetTranslateY = useRef(new Animated.Value(maxSheetTranslateY)).current;
   const sheetOffsetRef = useRef(maxSheetTranslateY);
@@ -216,8 +325,6 @@ export default function SearchMapScreen() {
   const [routePlans, setRoutePlans] = useState<DisplayRoutePlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [hasManuallySelectedRoute, setHasManuallySelectedRoute] = useState(false);
-  const [routeComparison, setRouteComparison] =
-    useState<RouteComparison | null>(null);
   const [fitMapSignal, setFitMapSignal] = useState(0);
   const [destinationCoord, setDestinationCoord] = useState<LatLng | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -228,6 +335,11 @@ export default function SearchMapScreen() {
   const [tripActivePlan, setTripActivePlan] = useState<DisplayRoutePlan | null>(
     null
   );
+  const [tripAlertBanner, setTripAlertBanner] = useState<{
+    type: "destination" | "transfer";
+    title: string;
+    message: string;
+  } | null>(null);
   const [tripDetailsExpanded, setTripDetailsExpanded] = useState(false);
   const [navLatitude, setNavLatitude] = useState(latitude);
   const [navLongitude, setNavLongitude] = useState(longitude);
@@ -238,6 +350,7 @@ export default function SearchMapScreen() {
   const [selectedSegment, setSelectedSegment] =
     useState<DisplayRouteSegment | null>(null);
   const tripWatchRef = useRef<(() => void) | null>(null);
+  const tripProgressRef = useRef({ segmentIndex: 0, coordinateIndex: 0 });
   const routeRequestIdRef = useRef(0);
   const accessRequestRef = useRef<{
     planId: string;
@@ -355,9 +468,10 @@ export default function SearchMapScreen() {
   const clearRoute = useCallback(() => {
     routeRequestIdRef.current += 1;
     stopTripWatch();
+    stopTripSpeech();
+    tripProgressRef.current = { segmentIndex: 0, coordinateIndex: 0 };
     setRouteLoading(false);
     setOriginSuggestLoading(false);
-    setRouteComparison(null);
     setTripActivePlan(null);
     setRoutePlans([]);
     setSelectedPlanId(null);
@@ -366,6 +480,9 @@ export default function SearchMapScreen() {
     setDestinationCoord(null);
     setRouteError(null);
     setSelectedSegment(null);
+    setAccessPath(null);
+    setAccessDurationMinutes(null);
+    accessRequestRef.current = null;
   }, [stopTripWatch]);
 
   useEffect(() => {
@@ -417,28 +534,68 @@ export default function SearchMapScreen() {
 
   const routes = useMemo<DisplayRoutePlan[]>(() => {
     const withFares = routePlans.map((p) => {
-      const fare =
-        p.segments
-          ? p.customFareValue != null
-          ? {
-              finalFare:
-                discountCode === "discounted"
-                  ? p.customFareValue * 0.8
-                  : p.customFareValue,
-              currency: "PHP",
-            }
-          : null
-          : computeFlatFareForTrip({
-              transferCount: p.transferCount,
-              discountCode,
-              logicalRouteKey: p.dbRouteId ?? p.id,
-            });
+      const updatedSegments = p.segments?.map((segment) => ({
+        ...segment,
+        fare: fareForSegment(segment),
+      }));
+      const hasTricycle =
+        updatedSegments?.some(
+          (segment) => segment.segmentType === "tricycle"
+        ) ||
+        /tricycle|trike/i.test(p.routeName) ||
+        /tricycle|trike/i.test(p.googleSummary ?? "");
+
+      const sharedFare = updatedSegments?.length
+        ? Math.ceil(
+            updatedSegments.reduce(
+              (total, segment) => total + fareForSegment(segment, "shared"),
+              0
+            ) * (discountCode === "discounted" ? 0.8 : 1)
+          )
+        : null;
+
+      const soloFare =
+        updatedSegments?.length && hasTricycle
+          ? Math.ceil(
+              updatedSegments.reduce((total, segment) => {
+                if (segment.segmentType === "tricycle") {
+                  // Solo or special trips for tricycle segments are excluded from the discount!
+                  return total + TRICYCLE_SOLO_FARE_PHP;
+                }
+                const segFare = fareForSegment(segment, "solo");
+                return (
+                  total +
+                  (discountCode === "discounted"
+                    ? Math.ceil(segFare * 0.8)
+                    : segFare)
+                );
+              }, 0)
+            )
+          : hasTricycle
+            ? TRICYCLE_SOLO_FARE_PHP
+            : null;
+
+      const flatFare = computeFlatFareForTrip({
+        transferCount: p.transferCount,
+        discountCode,
+        logicalRouteKey: p.dbRouteId ?? p.id,
+        distanceMeters: polylineDistanceMeters(p.polyline),
+        vehicleType: p.vehicleType,
+      });
+
+      const finalFareValue = Math.ceil(sharedFare ?? flatFare.finalFare);
+      const fareText =
+        hasTricycle && soloFare != null
+          ? `₱${finalFareValue} shared · ₱${soloFare} solo`
+          : formatCurrency(finalFareValue, "PHP");
+
       return {
         ...p,
-        fareText: fare
-          ? formatCurrency(fare.finalFare, fare.currency)
-          : "Fare unavailable",
-        fareValue: fare?.finalFare ?? null,
+        segments: updatedSegments ?? p.segments,
+        fareText,
+        fareValue: finalFareValue,
+        soloFareValue:
+          hasTricycle && soloFare != null ? soloFare : finalFareValue,
       };
     });
 
@@ -481,86 +638,225 @@ export default function SearchMapScreen() {
     if (!routes.some((r) => r.polyline.length > 1)) return undefined;
     const primaryId = selectedPlanId ?? routes[0]?.id ?? null;
     const visibleRoutes = routes;
-    return visibleRoutes.map((r) => ({
-      id: r.id,
-      coordinates: r.polyline,
-      selected: primaryId != null ? r.id === primaryId : false,
-    }));
-  }, [routes, selectedPlanId]);
+    const baseline = visibleRoutes.find((r) => r.id === primaryId);
+    const mapLocation = tripActivePlan
+      ? { latitude: navLatitude, longitude: navLongitude }
+      : { latitude, longitude };
+    return visibleRoutes.map((r) => {
+      const timeDifference =
+        baseline?.etaMinutes != null && r.etaMinutes != null
+          ? r.etaMinutes - baseline.etaMinutes
+          : null;
+
+      const sharedDifference =
+        baseline?.fareValue != null && r.fareValue != null
+          ? r.fareValue - baseline.fareValue
+          : null;
+
+      const baselineSolo =
+        baseline?.soloFareValue ?? baseline?.fareValue ?? null;
+      const rSolo = r.soloFareValue ?? r.fareValue ?? null;
+      const soloDifference =
+        baselineSolo != null && rSolo != null
+          ? rSolo - baselineSolo
+          : null;
+
+      const hasTricycleInvolved = Boolean(
+        baseline?.segments?.some((s) => s.segmentType === "tricycle") ||
+          r.segments?.some((s) => s.segmentType === "tricycle") ||
+          /tricycle|trike/i.test(baseline?.routeName ?? "") ||
+          /tricycle|trike/i.test(r.routeName) ||
+          /tricycle|trike/i.test(baseline?.googleSummary ?? "") ||
+          /tricycle|trike/i.test(r.googleSummary ?? "") ||
+          (baseline?.soloFareValue != null &&
+            baseline?.fareValue != null &&
+            baseline.soloFareValue !== baseline.fareValue) ||
+          (r.soloFareValue != null &&
+            r.fareValue != null &&
+            r.soloFareValue !== r.fareValue)
+      );
+
+      const roundedSharedDiff =
+        sharedDifference != null && Math.abs(sharedDifference) > 0.001
+          ? Math.ceil(Math.abs(sharedDifference))
+          : 0;
+
+      const roundedSoloDiff =
+        soloDifference != null && Math.abs(soloDifference) > 0.001
+          ? Math.ceil(Math.abs(soloDifference))
+          : 0;
+
+      let fareLabel: string | null = null;
+
+      // If a tricycle segment is involved and solo difference diverges from shared difference
+      if (
+        hasTricycleInvolved &&
+        soloDifference != null &&
+        sharedDifference != null &&
+        Math.abs(soloDifference - sharedDifference) > 0.001
+      ) {
+        const sharedText =
+          roundedSharedDiff === 0
+            ? "same shared"
+            : `₱${roundedSharedDiff} ${sharedDifference < 0 ? "cheaper" : "more"} shared`;
+
+        const soloText =
+          roundedSoloDiff === 0
+            ? "same solo"
+            : soloDifference < 0
+              ? `-₱${roundedSoloDiff} solo`
+              : `+₱${roundedSoloDiff} solo`;
+
+        fareLabel = `${sharedText} (${soloText})`;
+      } else if (roundedSharedDiff > 0) {
+        fareLabel = `₱${roundedSharedDiff} ${sharedDifference! < 0 ? "cheaper" : "more expensive"}`;
+      }
+
+      const comparisonLabel =
+        r.id !== primaryId
+          ? [
+              timeDifference != null && timeDifference !== 0
+                ? `${Math.abs(timeDifference)} min ${timeDifference < 0 ? "faster" : "slower"}`
+                : null,
+              fareLabel,
+            ].filter(Boolean).join(" · ") || "Similar route"
+          : undefined;
+      return {
+        id: r.id,
+        coordinates: r.polyline,
+        selected: primaryId != null ? r.id === primaryId : false,
+        comparisonLabel,
+        comparisonCoordinate:
+          r.id !== primaryId
+            ? closestRouteCoordinate(r.polyline, mapLocation)
+            : undefined,
+      };
+    });
+  }, [
+    routes,
+    selectedPlanId,
+    tripActivePlan,
+    navLatitude,
+    navLongitude,
+    latitude,
+    longitude,
+  ]);
+
+  const nextClass = useMemo(
+    () => getNextClassInfo(classSchedules),
+    [classSchedules]
+  );
+  const scheduleWarning = useMemo(() => {
+    if (!nextClass.item || nextClass.minutesUntil == null || !routes.length) {
+      return null;
+    }
+    const selectedRoute =
+      routes.find((route) => route.id === selectedPlanId) ?? routes[0];
+    const selectedLate =
+      selectedRoute?.etaMinutes != null &&
+      selectedRoute.etaMinutes > nextClass.minutesUntil;
+    if (!selectedLate) return null;
+    const onTime = routes.find(
+      (route) =>
+        route.etaMinutes != null && route.etaMinutes <= nextClass.minutesUntil!
+    );
+    return {
+      subject: nextClass.item.subject,
+      minutes: nextClass.minutesUntil,
+      onTime,
+      allLate: !onTime,
+    };
+  }, [nextClass, routes, selectedPlanId]);
 
   const selectedMapPlan = useMemo(
     () => routes.find((route) => route.id === selectedPlanId) ?? routes[0],
     [routes, selectedPlanId]
   );
 
-  const comparisonDetails = useMemo(() => {
-    if (filter !== "all" || !routeComparison) return null;
-    const comparedRoute = routes.find(
-      (route) => route.id === routeComparison.comparedRouteId
-    );
-    const baselineRoute = routes.find(
-      (route) => route.id === routeComparison.baselineRouteId
-    );
-    if (!comparedRoute || !baselineRoute) return null;
-
-    const fareDifference =
-      comparedRoute.fareValue != null && baselineRoute.fareValue != null
-        ? comparedRoute.fareValue - baselineRoute.fareValue
-        : null;
-    const timeDifference =
-      comparedRoute.etaMinutes != null && baselineRoute.etaMinutes != null
-        ? comparedRoute.etaMinutes - baselineRoute.etaMinutes
-        : null;
-
-    return { comparedRoute, baselineRoute, fareDifference, timeDifference };
-  }, [filter, routeComparison, routes]);
-
   const selectRoute = useCallback((routeId: string) => {
-    const previousRouteId = selectedPlanId ?? routes[0]?.id ?? null;
-    if (
-      filter === "all" &&
-      previousRouteId &&
-      previousRouteId !== routeId
-    ) {
-      setRouteComparison({
-        comparedRouteId: routeId,
-        baselineRouteId: previousRouteId,
-      });
-    } else if (filter !== "all") {
-      setRouteComparison(null);
-    }
     setSelectedPlanId(routeId);
     setHasManuallySelectedRoute(true);
     setAccessPath(null);
     setAccessDurationMinutes(null);
     setSelectedSegment(null);
     setFitMapSignal((n) => n + 1);
-  }, [filter, routes, selectedPlanId]);
+  }, []);
 
   const mapRouteSegments = useMemo(() => {
     const plan = tripActivePlan ?? selectedMapPlan;
-    if (!plan?.segments?.length) return undefined;
+    if (!plan) return undefined;
+
+    const baseSegments: DisplayRouteSegment[] =
+      plan.segments && plan.segments.length > 0
+        ? plan.segments
+        : plan.polyline && plan.polyline.length > 1
+          ? [
+              {
+                segmentId: `primary-segment-${plan.id}`,
+                segmentType: plan.vehicleType ?? "jeepney",
+                coordinates: plan.polyline,
+                label: plan.routeName,
+                fare: plan.fareValue ?? undefined,
+                durationMinutes: plan.etaMinutes ?? undefined,
+              },
+            ]
+          : [];
+
+    if (!baseSegments.length) return undefined;
+
     const currentLocation = tripActivePlan
       ? { latitude: navLatitude, longitude: navLongitude }
-      : { latitude, longitude };
+      : searchedOriginCoordinate ?? { latitude, longitude };
+
+    const distanceToBoarding = plan.boardingCoordinate
+      ? haversineMeters(
+          { lat: currentLocation.latitude, lng: currentLocation.longitude },
+          {
+            lat: plan.boardingCoordinate.latitude,
+            lng: plan.boardingCoordinate.longitude,
+          }
+        )
+      : Infinity;
+    const hasReachedBoarding = distanceToBoarding <= 35;
+
+    const effectiveAccessCoords =
+      accessPath && accessPath.length > 1
+        ? accessPath
+        : plan.boardingCoordinate
+          ? [
+              { latitude: currentLocation.latitude, longitude: currentLocation.longitude },
+              { latitude: plan.boardingCoordinate.latitude, longitude: plan.boardingCoordinate.longitude },
+            ]
+          : null;
+
     const accessSegment: DisplayRouteSegment | null =
       plan.boardingCoordinate &&
-      accessPath?.length &&
-      accessRequestRef.current?.planId === plan.id
-      ? {
-          segmentId: "dynamic-access-walk",
-          segmentType: "walk",
-          coordinates: accessPath,
-          label: "Walk to boarding point",
-          durationMinutes: accessDurationMinutes,
-        }
-      : null;
+      effectiveAccessCoords &&
+      effectiveAccessCoords.length > 1 &&
+      (!tripActivePlan || !hasReachedBoarding)
+        ? {
+            segmentId: "dynamic-access-walk",
+            segmentType: "walk",
+            coordinates: effectiveAccessCoords,
+            label: "Walk to boarding point",
+            durationMinutes: accessDurationMinutes,
+          }
+        : null;
+
+    const candidateSegments =
+      accessSegment && (!tripActivePlan || !hasReachedBoarding)
+        ? [accessSegment, ...baseSegments]
+        : baseSegments;
+
     const routeSegments = tripActivePlan
-      ? routeSegmentsForLocation(plan.segments, currentLocation)
-      : plan.segments;
-    return accessSegment
-      ? [accessSegment, ...routeSegments]
-      : routeSegments;
+      ? routeSegmentsForLocation(
+          candidateSegments,
+          currentLocation,
+          tripProgressRef.current
+        )
+      : candidateSegments;
+
+    return routeSegments;
   }, [
     selectedMapPlan,
     tripActivePlan,
@@ -584,21 +880,24 @@ export default function SearchMapScreen() {
   }, [mapRouteSegments, selectedSegment]);
 
   useEffect(() => {
-    const plan = selectedMapPlan;
+    const plan = tripActivePlan ?? selectedMapPlan;
     if (!plan?.boardingCoordinate) {
       setAccessPath(null);
       setAccessDurationMinutes(null);
+      accessRequestRef.current = null;
       return;
     }
 
     const currentLocation = tripActivePlan
-      ? searchedOriginCoordinate ?? { latitude: navLatitude, longitude: navLongitude }
+      ? { latitude: navLatitude, longitude: navLongitude }
       : searchedOriginCoordinate ?? { latitude, longitude };
     const previousRequest = accessRequestRef.current;
     if (previousRequest?.planId !== plan.id) {
       setAccessPath(null);
+      setAccessDurationMinutes(null);
     }
     if (
+      accessPath?.length &&
       previousRequest?.planId === plan.id &&
       haversineMeters(
         { lat: previousRequest.coordinate.latitude, lng: previousRequest.coordinate.longitude },
@@ -607,11 +906,9 @@ export default function SearchMapScreen() {
     ) {
       return;
     }
-    setAccessDurationMinutes(null);
     accessRequestRef.current = { planId: plan.id, coordinate: currentLocation };
 
     let cancelled = false;
-    const requestPlanId = plan.id;
     const timer = setTimeout(() => {
       void googleMapsRoutes.getWalkingRouteBetween(
         { lat: currentLocation.latitude, lng: currentLocation.longitude },
@@ -621,20 +918,16 @@ export default function SearchMapScreen() {
         }
       )
         .then((coordinates) => {
-          if (
-            !cancelled &&
-            accessRequestRef.current?.planId === requestPlanId &&
-            coordinates.length > 1
-          ) {
+          if (!cancelled && coordinates.length > 1) {
             setAccessPath(coordinates);
           }
         })
         .catch(() => {
-          if (
-            !cancelled &&
-            accessRequestRef.current?.planId === requestPlanId
-          ) {
-            setAccessPath(null);
+          if (!cancelled) {
+            setAccessPath([
+              { latitude: currentLocation.latitude, longitude: currentLocation.longitude },
+              { latitude: plan.boardingCoordinate!.latitude, longitude: plan.boardingCoordinate!.longitude },
+            ]);
           }
         });
       void googleMapsRoutes
@@ -647,22 +940,16 @@ export default function SearchMapScreen() {
           "walking"
         )
         .then((seconds) => {
-          if (
-            !cancelled &&
-            accessRequestRef.current?.planId === requestPlanId
-          ) {
+          if (!cancelled) {
             setAccessDurationMinutes(Math.max(1, Math.ceil(seconds / 60)));
           }
         })
         .catch(() => {
-          if (
-            !cancelled &&
-            accessRequestRef.current?.planId === requestPlanId
-          ) {
+          if (!cancelled) {
             setAccessDurationMinutes(null);
           }
         });
-    }, 250);
+    }, 150);
 
     return () => {
       cancelled = true;
@@ -689,15 +976,88 @@ export default function SearchMapScreen() {
     );
   }, [tripActivePlan, destinationCoord, navLatitude, navLongitude]);
 
-  const endTrip = useCallback(() => {
+  const notifiedRef = useRef({ destination: false, segment: "" });
+  useEffect(() => {
+    if (!tripActivePlan || !destinationCoord) {
+      notifiedRef.current = { destination: false, segment: "" };
+      stopTripSpeech();
+      setTripAlertBanner(null);
+      return;
+    }
+    const destinationDistance = haversineMeters(
+      { lat: navLatitude, lng: navLongitude },
+      { lat: destinationCoord.latitude, lng: destinationCoord.longitude }
+    );
+    if (destinationDistance <= 100 && !notifiedRef.current.destination) {
+      notifiedRef.current.destination = true;
+      try {
+        Vibration.vibrate([0, 500, 200, 500]);
+      } catch {
+        /* platform fallback */
+      }
+      const title = "Destination Reached";
+      const message = "You are close to your destination! Tap 'End trip' when you arrive.";
+      setTripAlertBanner({
+        type: "destination",
+        title,
+        message,
+      });
+      speakTripNotification("You are close to your destination. You have arrived.");
+      Alert.alert(
+        "Destination reached",
+        "You have arrived near your destination. You can now conclude your trip."
+      );
+      return;
+    }
+    const nearby = tripActivePlan.segments?.find((segment, index) => {
+      // The initial segment (index 0) is the start terminal/stop of the route, not a transfer point
+      if (index === 0) return false;
+      const endpoint = segment.coordinates[0];
+      return (
+        endpoint &&
+        haversineMeters(
+          { lat: navLatitude, lng: navLongitude },
+          { lat: endpoint.latitude, lng: endpoint.longitude }
+        ) <= 150
+      );
+    });
+    if (nearby && notifiedRef.current.segment !== nearby.segmentId) {
+      notifiedRef.current.segment = nearby.segmentId;
+      try {
+        Vibration.vibrate([0, 400, 200, 400]);
+      } catch {
+        /* platform fallback */
+      }
+      const title =
+        nearby.segmentType === "walk" ? "Approaching Stop" : "Transfer Point Nearby";
+      const message =
+        nearby.label ?? `Prepare for your upcoming ${nearby.segmentType} segment.`;
+      setTripAlertBanner({
+        type: "transfer",
+        title,
+        message,
+      });
+      speakTripNotification(
+        nearby.segmentType === "walk"
+          ? "Approaching stop. Prepare to alight."
+          : `Transfer point nearby. Prepare for your upcoming ${nearby.segmentType} segment.`
+      );
+      Alert.alert(title, message);
+    }
+  }, [tripActivePlan, destinationCoord, navLatitude, navLongitude]);
+
+  const endTrip = useCallback(async () => {
     if (tripActivePlan) {
-      void addRecentFromTrip(tripActivePlan, {
-        originLabel,
-        destinationLabel: destination.trim(),
+      await addRecentFromTrip(tripActivePlan, {
+        originLabel: originLabel.trim() || "Current Location",
+        destinationLabel: destination.trim() || "De La Salle Araneta University",
       });
     }
     stopTripWatch();
+    stopTripSpeech();
+    tripProgressRef.current = { segmentIndex: 0, coordinateIndex: 0 };
     setTripActivePlan(null);
+    setTripAlertBanner(null);
   }, [
     addRecentFromTrip,
     destination,
@@ -717,19 +1077,47 @@ export default function SearchMapScreen() {
         return;
       }
       setSelectedPlanId(plan.id);
-      setTripActivePlan(plan);
-      setTripDetailsExpanded(false);
-      setNavLatitude(latitude);
-      setNavLongitude(longitude);
+      tripProgressRef.current = { segmentIndex: 0, coordinateIndex: 0 };
+
+      let currentLat = latitude;
+      let currentLng = longitude;
       try {
         const pos = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.High,
         });
-        setNavLatitude(pos.coords.latitude);
-        setNavLongitude(pos.coords.longitude);
+        currentLat = pos.coords.latitude;
+        currentLng = pos.coords.longitude;
+        setNavLatitude(currentLat);
+        setNavLongitude(currentLng);
       } catch {
-        /* use last known */
+        setNavLatitude(latitude);
+        setNavLongitude(longitude);
       }
+
+      // If user starts their trip already at or near any terminal/stop, mark it as acknowledged
+      // so it never fires a "Transfer point nearby" or "Approaching stop" notification on start
+      const initialNearbySegment = plan.segments?.find((segment) => {
+        const endpoint = segment.coordinates[0];
+        return (
+          endpoint &&
+          haversineMeters(
+            { lat: currentLat, lng: currentLng },
+            { lat: endpoint.latitude, lng: endpoint.longitude }
+          ) <= 150
+        );
+      });
+
+      notifiedRef.current = {
+        destination: false,
+        segment: initialNearbySegment?.segmentId ?? (plan.segments?.[0]?.segmentId || ""),
+      };
+
+      setTripActivePlan(plan);
+      await addRecentFromTrip(plan, {
+        originLabel: originLabel.trim() || "Current Location",
+        destinationLabel: destination.trim() || "De La Salle Araneta University",
+      });
+      setTripDetailsExpanded(false);
       snapSheet(false);
     },
     [latitude, longitude, snapSheet, destination, originLabel, addRecentFromTrip]
@@ -888,10 +1276,14 @@ export default function SearchMapScreen() {
           longitude: originGeo.lng,
         });
 
-      const customDestinations = await fetchNearestCustomItinerary({
-        latitude: originGeo.lat,
-        longitude: originGeo.lng,
-      }).catch(() => []);
+      const customDestinations = await withTimeout(
+        fetchNearestCustomItinerary({
+          latitude: originGeo.lat,
+          longitude: originGeo.lng,
+        }),
+        CUSTOM_ROUTE_DATA_TIMEOUT_MS,
+        "Custom route data timed out."
+      ).catch(() => []);
 
       if (requestId !== routeRequestIdRef.current) return;
 
@@ -954,8 +1346,14 @@ export default function SearchMapScreen() {
           boardStop: customDestination.boardingName,
           offStop: customDestination.destination.name,
           etaMinutes: totalDurationMinutes > 0 ? totalDurationMinutes : null,
-          fareValue: customDestination.fare,
-          customFareValue: customDestination.fare,
+          fareValue:
+            customDestination.fare != null
+              ? Math.ceil(customDestination.fare)
+              : null,
+          customFareValue:
+            customDestination.fare != null
+              ? Math.ceil(customDestination.fare)
+              : null,
           boardingCoordinate: customDestination.boardingCoordinate,
           segments: customDestination.segments.map(
             (segment, index): DisplayRouteSegment => ({
@@ -963,7 +1361,10 @@ export default function SearchMapScreen() {
               segmentType: segment.segment_type,
               label: segment.segment_name,
               routeId: segment.route_id,
-              fare: segmentDetails[index]?.fare,
+              fare:
+                segmentDetails[index]?.fare != null
+                  ? Math.ceil(segmentDetails[index]!.fare)
+                  : null,
               durationMinutes: segmentDetails[index]?.durationMinutes,
               coordinates: segment.coordinates.map(([longitude, latitude]) => ({
                 latitude: Number(latitude),
@@ -1041,21 +1442,11 @@ export default function SearchMapScreen() {
         };
       }
 
-      const finalizePlansAndBounds = async (pool: TransitRouteRecord[]) => {
+      const finalizePlansAndBounds = async () => {
         if (requestId !== routeRequestIdRef.current) return;
-        const rankedPool = [...pool]
-          .sort((a, b) => {
-            const ca =
-              a.generalized_cost_minutes ?? Number(a.eta_minutes ?? 99999);
-            const cb =
-              b.generalized_cost_minutes ?? Number(b.eta_minutes ?? 99999);
-            return ca - cb;
-          })
-          .slice(0, DB_MATCH_POOL_LIMIT);
-
         let plans = composeTransitPlanOptions({
           itineraries: googleItins,
-          dbRoutes: rankedPool,
+          dbRoutes: [],
           fallbackPolyline: overview?.coordinates,
           limit: 3,
         });
@@ -1092,47 +1483,7 @@ export default function SearchMapScreen() {
         setFitMapSignal((n) => n + 1);
       };
 
-      const directMatches = await fetchGtfsRoutesBetweenPoints({
-        originLat: originGeo.lat,
-        originLng: originGeo.lng,
-        destinationLat: destGeo.lat,
-        destinationLng: destGeo.lng,
-        stopRadiusMeters: 600,
-      });
-      if (requestId !== routeRequestIdRef.current) return;
-      const shapeMatches = await fetchGtfsRoutesByShape({
-        originLat: originGeo.lat,
-        originLng: originGeo.lng,
-        destinationLat: destGeo.lat,
-        destinationLng: destGeo.lng,
-        shapeRadiusMeters: 700,
-      });
-      if (requestId !== routeRequestIdRef.current) return;
-      const geometryMatches = await fetchGtfsRoutesWithGeometry({
-        originLat: originGeo.lat,
-        originLng: originGeo.lng,
-        destinationLat: destGeo.lat,
-        destinationLng: destGeo.lng,
-        shapeRadiusMeters: 700,
-      });
-      if (requestId !== routeRequestIdRef.current) return;
-
-      const directByRouteId = new Map(
-        directMatches.map((route) => [route.route_id, route])
-      );
-      const shapeByRouteId = new Map(
-        shapeMatches.map((route) => [route.route_id, route])
-      );
-
-      // Only pass routes with their own geometry to the plan builder. This
-      // prevents a metadata-only route from borrowing another route's line.
-      const fetched = geometryMatches.map((geometryRoute) => ({
-        ...shapeByRouteId.get(geometryRoute.route_id),
-        ...directByRouteId.get(geometryRoute.route_id),
-        ...geometryRoute,
-      }));
-
-      await finalizePlansAndBounds(fetched);
+      await finalizePlansAndBounds();
     } catch (e: unknown) {
       if (requestId !== routeRequestIdRef.current) return;
       clearRoute();
@@ -1191,6 +1542,7 @@ export default function SearchMapScreen() {
         fitSignal={tripActivePlan ? 0 : fitMapSignal}
         selectedSegmentId={selectedSegment?.segmentId}
         onSegmentPress={setSelectedSegment}
+        onAlternativePress={selectRoute}
       />
 
       {selectedSegment ? (
@@ -1211,8 +1563,8 @@ export default function SearchMapScreen() {
                 : "Fare unavailable"
               : formatCurrency(
                   discountCode === "discounted"
-                    ? selectedSegment.fare * 0.8
-                    : selectedSegment.fare,
+                    ? Math.ceil(selectedSegment.fare * 0.8)
+                    : Math.ceil(selectedSegment.fare),
                   "PHP"
                 )}
           </Text>
@@ -1225,53 +1577,6 @@ export default function SearchMapScreen() {
           <Pressable onPress={() => setSelectedSegment(null)}>
             <Text style={styles.segmentPopupClose}>Close</Text>
           </Pressable>
-        </View>
-      ) : null}
-
-      {comparisonDetails ? (
-        <View style={styles.routeComparisonPopup}>
-          <View style={styles.routeComparisonHeader}>
-            <View style={styles.routeComparisonHeaderText}>
-              <Text style={styles.routeComparisonTitle}>
-                Compared with {comparisonDetails.baselineRoute.routeName}
-              </Text>
-              <Text style={styles.routeComparisonRoute} numberOfLines={1}>
-                {comparisonDetails.comparedRoute.routeName}
-              </Text>
-            </View>
-            <Pressable
-              onPress={() => setRouteComparison(null)}
-              accessibilityRole="button"
-              accessibilityLabel="Close route comparison"
-              hitSlop={8}
-            >
-              <Ionicons name="close" size={20} color="#495057" />
-            </Pressable>
-          </View>
-          {comparisonDetails.fareDifference !== null &&
-          comparisonDetails.fareDifference !== 0 ? (
-            <Text style={styles.routeComparisonLine}>
-              {comparisonDetails.fareDifference < 0
-                ? `Cheaper by ₱${Math.abs(comparisonDetails.fareDifference).toFixed(2)}`
-                : `More expensive by ₱${comparisonDetails.fareDifference.toFixed(2)}`}
-            </Text>
-          ) : null}
-          {comparisonDetails.timeDifference !== null &&
-          comparisonDetails.timeDifference !== 0 ? (
-            <Text style={styles.routeComparisonLine}>
-              {comparisonDetails.timeDifference < 0
-                ? `Faster by ${Math.abs(comparisonDetails.timeDifference)} min`
-                : `Slower by ${comparisonDetails.timeDifference} min`}
-            </Text>
-          ) : null}
-          {(!comparisonDetails.fareDifference ||
-            comparisonDetails.fareDifference === 0) &&
-          (!comparisonDetails.timeDifference ||
-            comparisonDetails.timeDifference === 0) ? (
-            <Text style={styles.routeComparisonLine}>
-              Similar fare and travel time
-            </Text>
-          ) : null}
         </View>
       ) : null}
 
@@ -1295,6 +1600,55 @@ export default function SearchMapScreen() {
           </SafeAreaView>
 
           <View style={styles.tripContent}>
+            {tripAlertBanner ? (
+              <View
+                style={[
+                  styles.tripAlertBanner,
+                  tripAlertBanner.type === "destination"
+                    ? styles.tripAlertBannerDestination
+                    : styles.tripAlertBannerTransfer,
+                ]}
+              >
+                <Ionicons
+                  name={
+                    tripAlertBanner.type === "destination"
+                      ? "checkmark-circle"
+                      : "notifications"
+                  }
+                  size={24}
+                  color="#fff"
+                />
+                <View style={styles.tripAlertBannerContent}>
+                  <Text style={styles.tripAlertBannerTitle}>
+                    {tripAlertBanner.title}
+                  </Text>
+                  <Text style={styles.tripAlertBannerText}>
+                    {tripAlertBanner.message}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => speakTripNotification(tripAlertBanner.message)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Replay audio announcement"
+                  style={{ marginRight: 6 }}
+                >
+                  <Ionicons name="volume-high-outline" size={22} color="#fff" />
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    stopTripSpeech();
+                    setTripAlertBanner(null);
+                  }}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss notification"
+                >
+                  <Ionicons name="close" size={20} color="#fff" />
+                </Pressable>
+              </View>
+            ) : null}
+
             <View style={styles.tripLocationCard}>
               <View style={styles.tripLocationRow}>
                 <View style={styles.originDot}><View style={styles.originDotInner} /></View>
@@ -1355,42 +1709,125 @@ export default function SearchMapScreen() {
                 </View>
               </View>
               <View style={styles.tripFareHeader}>
-                <Text style={styles.tripFareTitle}>Estimated Fare</Text>
-                <Text style={styles.tripFareBadge}>{discountCode === "discounted" ? "Discounted" : "Regular"}</Text>
+                <Text style={styles.tripFareTitle}>Estimated Fare Breakdown</Text>
+                <Text style={styles.tripFareBadge}>
+                  {discountCode === "discounted" ? "Discounted (20% off)" : "Regular Fare"}
+                </Text>
               </View>
-              <View style={styles.tripFareRow}>
-                <Text style={styles.tripFareLabel}>{tripActivePlan.boardStop}</Text>
-                <Text style={styles.tripFareValue}>{tripActivePlan.fareText}</Text>
-              </View>
-              <View style={styles.tripFareRow}>
-                <Text style={styles.tripFareLabel}>{tripActivePlan.offStop}</Text>
-                <Text style={styles.tripFareValue}>{tripActivePlan.transfersText} transfer(s)</Text>
-              </View>
-              {tripActivePlan.segments
-                ?.filter((segment) => segment.segmentType !== "walk" && segment.fare != null)
-                .map((segment) => (
-                  <View key={`fare-${segment.segmentId}`} style={styles.tripFareRow}>
-                    <Text style={styles.tripFareLabel} numberOfLines={1}>
-                      {segment.label ?? segment.routeId ?? "Transit segment"}
-                    </Text>
-                    <Text style={styles.tripFareValue}>
-                      {formatCurrency(
+
+              {(() => {
+                const transitSegments = (tripActivePlan.segments ?? []).filter(
+                  (segment) => segment.segmentType !== "walk"
+                );
+                if (transitSegments.length > 0) {
+                  return transitSegments.map((segment) => {
+                    const isTricycle = segment.segmentType === "tricycle";
+                    const isBus = segment.segmentType === "bus";
+                    const distMeters = polylineDistanceMeters(segment.coordinates);
+
+                    const legLabel =
+                      segment.label ?? segment.routeId ?? `${segment.segmentType} ride`;
+                    let legValue = "";
+                    let legNote = "";
+
+                    if (isTricycle) {
+                      const shared = Math.ceil(
                         discountCode === "discounted"
-                          ? (segment.fare ?? 0) * 0.8
-                          : segment.fare ?? 0,
-                        "PHP"
-                      )}
-                    </Text>
+                          ? TRICYCLE_SHARED_FARE_PHP * 0.8
+                          : TRICYCLE_SHARED_FARE_PHP
+                      );
+                      const solo = TRICYCLE_SOLO_FARE_PHP;
+                      legValue = `₱${shared} shared · ₱${solo} solo`;
+                      legNote =
+                        "₱15 for shared with other passengers, and ₱50 for solo/special (excluded from discount)";
+                    } else if (isBus) {
+                      const busFare = Math.ceil(
+                        discountCode === "discounted"
+                          ? BUS_BASE_FARE_PHP * 0.8
+                          : BUS_BASE_FARE_PHP
+                      );
+                      legValue = `₱${busFare}`;
+                      legNote = "35 Base fare";
+                    } else {
+                      const jFare = computeJeepneyFare(distMeters);
+                      const finalJFare = Math.ceil(
+                        discountCode === "discounted" ? jFare * 0.8 : jFare
+                      );
+                      legValue = `₱${finalJFare}`;
+                      legNote =
+                        "14 base fare for 4 kilometers (+₱2 per succeeding km at/after 5 km)";
+                    }
+
+                    return (
+                      <View
+                        key={`fare-${segment.segmentId}`}
+                        style={styles.tripFareLegContainer}
+                      >
+                        <View style={styles.tripFareRow}>
+                          <Text style={styles.tripFareLabel} numberOfLines={1}>
+                            {legLabel}
+                          </Text>
+                          <Text style={styles.tripFareValue}>{legValue}</Text>
+                        </View>
+                        <Text style={styles.tripFareNote}>{legNote}</Text>
+                      </View>
+                    );
+                  });
+                }
+
+                const isTricycle = /tricycle|trike/i.test(tripActivePlan.routeName);
+                const isBus =
+                  tripActivePlan.vehicleType === "bus" ||
+                  /bus/i.test(tripActivePlan.routeName);
+                const distMeters = polylineDistanceMeters(tripActivePlan.polyline);
+
+                let legValue = "";
+                let legNote = "";
+                if (isTricycle) {
+                  const shared = Math.ceil(
+                    discountCode === "discounted"
+                      ? TRICYCLE_SHARED_FARE_PHP * 0.8
+                      : TRICYCLE_SHARED_FARE_PHP
+                  );
+                  const solo = TRICYCLE_SOLO_FARE_PHP;
+                  legValue = `₱${shared} shared · ₱${solo} solo`;
+                  legNote =
+                    "₱15 for shared with other passengers, and ₱50 for solo/special (excluded from discount)";
+                } else if (isBus) {
+                  const busFare = Math.ceil(
+                    discountCode === "discounted"
+                      ? BUS_BASE_FARE_PHP * 0.8
+                      : BUS_BASE_FARE_PHP
+                  );
+                  legValue = `₱${busFare}`;
+                  legNote = "35 Base fare";
+                } else {
+                  const jFare = computeJeepneyFare(distMeters);
+                  const finalJFare = Math.ceil(
+                    discountCode === "discounted" ? jFare * 0.8 : jFare
+                  );
+                  legValue = `₱${finalJFare}`;
+                  legNote =
+                    "14 base fare for 4 kilometers (+₱2 per succeeding km at/after 5 km)";
+                }
+
+                return (
+                  <View style={styles.tripFareLegContainer}>
+                    <View style={styles.tripFareRow}>
+                      <Text style={styles.tripFareLabel} numberOfLines={1}>
+                        {tripActivePlan.routeName}
+                      </Text>
+                      <Text style={styles.tripFareValue}>{legValue}</Text>
+                    </View>
+                    <Text style={styles.tripFareNote}>{legNote}</Text>
                   </View>
-                ))}
-              {tripActivePlan.segments?.some(
-                (segment) => segment.segmentType !== "walk" && segment.fare != null
-              ) ? (
-                <View style={styles.tripFareTotalRow}>
-                  <Text style={styles.tripFareTotalLabel}>Total fare</Text>
-                  <Text style={styles.tripFareTotalValue}>{tripActivePlan.fareText}</Text>
-                </View>
-              ) : null}
+                );
+              })()}
+
+              <View style={styles.tripFareTotalRow}>
+                <Text style={styles.tripFareTotalLabel}>Total estimated fare</Text>
+                <Text style={styles.tripFareTotalValue}>{tripActivePlan.fareText}</Text>
+              </View>
             </View>
 
             <View style={styles.tripStepsCard}>
@@ -1584,8 +2021,43 @@ export default function SearchMapScreen() {
           contentContainerStyle={styles.sheetContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          bounces={false}
+          overScrollMode="never"
+          onContentSizeChange={(_, h) => handleContentLayout(h)}
         >
-          <Text style={styles.sheetTitle}>Available Routes</Text>
+          <View onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}>
+            <Text style={styles.sheetTitle}>Available Routes</Text>
+          {scheduleWarning ? (
+            <View style={styles.scheduleWarning}>
+              <View style={styles.scheduleWarningHeader}>
+                <Ionicons
+                  name={scheduleWarning.allLate ? "warning" : "time"}
+                  size={18}
+                  color="#b45309"
+                />
+                <Text style={styles.scheduleWarningTitle}>
+                  {scheduleWarning.allLate ? "Late Arrival Warning" : "Schedule Alert"}
+                </Text>
+              </View>
+              <Text style={styles.scheduleWarningText}>
+                Your {scheduleWarning.subject} starts in {scheduleWarning.minutes} min.
+                {scheduleWarning.allLate
+                  ? " All available routes are estimated to arrive late for this class."
+                  : ` Taking this route may make you late. Take ${scheduleWarning.onTime?.routeName} instead to arrive on time.`}
+              </Text>
+              {scheduleWarning.onTime ? (
+                <Pressable
+                  style={styles.scheduleSwitchBtn}
+                  onPress={() => selectRoute(scheduleWarning.onTime!.id)}
+                >
+                  <Ionicons name="swap-horizontal" size={16} color="#fff" />
+                  <Text style={styles.scheduleSwitchBtnText}>
+                    Switch to {scheduleWarning.onTime.routeName}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
 
           <Text style={styles.controlLabel}>Route Preference</Text>
           <View style={styles.chipsRow}>
@@ -1638,6 +2110,36 @@ export default function SearchMapScreen() {
               const meta = { originLabel, destinationLabel: destLabel };
               const saved =
                 !!destLabel && isBookmarked(r, meta);
+              const hasTricycle = r.segments?.some(
+                (segment) => segment.segmentType === "tricycle"
+              );
+              const tricycleFareText = hasTricycle
+                ? `₱${Math.ceil(
+                    r.segments!.reduce((total, segment) => {
+                      const baseFare = fareForSegment(segment, "shared");
+                      return (
+                        total +
+                        (discountCode === "discounted"
+                          ? Math.ceil(baseFare * 0.8)
+                          : baseFare)
+                      );
+                    }, 0)
+                  )} shared · ₱${Math.ceil(
+                    r.segments!.reduce((total, segment) => {
+                      if (segment.segmentType === "tricycle") {
+                        // Solo or special trips for tricycle segments are excluded from the discount
+                        return total + TRICYCLE_SOLO_FARE_PHP;
+                      }
+                      const baseFare = fareForSegment(segment, "solo");
+                      return (
+                        total +
+                        (discountCode === "discounted"
+                          ? Math.ceil(baseFare * 0.8)
+                          : baseFare)
+                      );
+                    }, 0)
+                  )} solo`
+                : null;
               return (
                 <View
                   key={r.id}
@@ -1668,6 +2170,11 @@ export default function SearchMapScreen() {
                       {r.estimatedText} · {r.transfersText} transfer(s) ·{" "}
                       {r.fareText}
                     </Text>
+                    {tricycleFareText && !r.fareText.includes("solo") ? (
+                      <Text style={styles.tricycleFareText}>
+                        Estimated fare: {tricycleFareText}
+                      </Text>
+                    ) : null}
                     {r.scoreText ? (
                       <Text style={styles.routeLine}>Score: {r.scoreText}</Text>
                     ) : null}
@@ -1713,6 +2220,99 @@ export default function SearchMapScreen() {
             })}
           </ScrollView>
           )}
+          {(() => {
+            const rideDetailSegments: DisplayRouteSegment[] =
+              selectedMapPlan?.segments?.length
+                ? selectedMapPlan.segments
+                : selectedMapPlan
+                  ? [
+                      {
+                        segmentId: `primary-${selectedMapPlan.id}`,
+                        segmentType:
+                          selectedMapPlan.vehicleType === "bus"
+                            ? "bus"
+                            : /tricycle|trike/i.test(selectedMapPlan.routeName)
+                              ? "tricycle"
+                              : "jeepney",
+                        label: selectedMapPlan.routeName,
+                        fare: selectedMapPlan.fareValue ?? undefined,
+                        durationMinutes: selectedMapPlan.etaMinutes ?? undefined,
+                        coordinates: selectedMapPlan.polyline,
+                      },
+                    ]
+                  : [];
+
+            if (!rideDetailSegments.length) return null;
+
+            return (
+              <View style={styles.rideDetailsCard}>
+                <Text style={styles.rideDetailsTitle}>Ride details</Text>
+                {rideDetailSegments.map((segment, index) => {
+                  let modeText = "Walk";
+                  if (segment.segmentType === "jeepney") {
+                    modeText = "Jeepney";
+                  } else if (segment.segmentType === "tricycle") {
+                    modeText = "Tricycle";
+                  } else if (segment.segmentType === "bus") {
+                    modeText = "Bus";
+                  }
+
+                  let fareText: string | null = null;
+                  if (segment.segmentType === "tricycle") {
+                    const shared = Math.ceil(
+                      discountCode === "discounted"
+                        ? TRICYCLE_SHARED_FARE_PHP * 0.8
+                        : TRICYCLE_SHARED_FARE_PHP
+                    );
+                    const solo = TRICYCLE_SOLO_FARE_PHP;
+                    fareText = `₱${shared} shared · ₱${solo} solo`;
+                  } else if (segment.segmentType === "bus") {
+                    const busFare = Math.ceil(
+                      discountCode === "discounted"
+                        ? BUS_BASE_FARE_PHP * 0.8
+                        : BUS_BASE_FARE_PHP
+                    );
+                    fareText = `₱${busFare}`;
+                  } else if (segment.segmentType === "jeepney") {
+                    const distMeters = polylineDistanceMeters(segment.coordinates);
+                    const rawFare = segment.fare ?? computeJeepneyFare(distMeters);
+                    const finalFare = Math.ceil(
+                      discountCode === "discounted" ? rawFare * 0.8 : rawFare
+                    );
+                    fareText = `₱${finalFare}`;
+                  }
+
+                  let timeText: string | null = null;
+                  if (segment.durationMinutes != null && segment.durationMinutes > 0) {
+                    timeText = `${Math.ceil(segment.durationMinutes)} min`;
+                  } else if (segment.coordinates.length >= 2) {
+                    const distMeters = polylineDistanceMeters(segment.coordinates);
+                    const speedMetersPerMin = segment.segmentType === "walk" ? 75 : 250;
+                    const estMin = Math.max(1, Math.round(distMeters / speedMetersPerMin));
+                    timeText = `${estMin} min`;
+                  }
+
+                  const descParts = [modeText, fareText, timeText].filter(Boolean);
+                  const description = descParts.join(" - ");
+
+                  return (
+                    <View key={segment.segmentId} style={styles.rideDetailRow}>
+                      <View style={styles.rideDetailNumber}>
+                        <Text style={styles.rideDetailNumberText}>{index + 1}</Text>
+                      </View>
+                      <View style={styles.rideDetailText}>
+                        <Text style={styles.rideDetailLabel}>
+                          {segment.label ?? segment.routeId ?? `${modeText} ride`}
+                        </Text>
+                        <Text style={styles.rideDetailMeta}>{description}</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })()}
+          </View>
         </ScrollView>
       </Animated.View>
       ) : null}
@@ -2005,45 +2605,138 @@ const styles = StyleSheet.create({
   routeCardPressablePressed: {
     opacity: 0.92,
   },
-  routeComparisonPopup: {
-    position: "absolute",
-    top: 116,
-    left: 16,
-    right: 16,
-    zIndex: 5,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.16,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4,
+  routeComparisonInline: {
+    color: "#2d6a4f",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 5,
   },
-  routeComparisonHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  routeComparisonHeaderText: {
-    flex: 1,
-  },
-  routeComparisonTitle: {
-    color: "#334155",
+  tricycleFareText: {
+    color: "#7f5539",
     fontSize: 12,
     fontWeight: "600",
+    marginTop: 3,
   },
-  routeComparisonRoute: {
-    color: GREEN,
-    fontSize: 14,
+  scheduleWarning: {
+    backgroundColor: "#fffbeb",
+    borderColor: "#f59e0b",
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
+  scheduleWarningHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
+  scheduleWarningTitle: {
+    color: "#b45309",
+    fontSize: 13,
     fontWeight: "700",
+  },
+  scheduleWarningText: {
+    color: "#78350f",
+    fontSize: 12,
+    lineHeight: 18,
     marginTop: 2,
   },
-  routeComparisonLine: {
-    color: "#495057",
+  scheduleSwitchBtn: {
+    marginTop: 10,
+    backgroundColor: "#b45309",
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+  },
+  scheduleSwitchBtnText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  tripAlertBanner: {
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  tripAlertBannerDestination: {
+    backgroundColor: "#059669",
+  },
+  tripAlertBannerTransfer: {
+    backgroundColor: "#d97706",
+  },
+  tripAlertBannerContent: {
+    flex: 1,
+  },
+  tripAlertBannerTitle: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  tripAlertBannerText: {
+    color: "rgba(255, 255, 255, 0.92)",
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  rideDetailsCard: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: "#f1f7f3",
+    borderWidth: 1,
+    borderColor: "#d5e8dc",
+  },
+  rideDetailsTitle: {
+    color: GREEN,
+    fontSize: 15,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  rideDetailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  rideDetailNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: GREEN,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 9,
+  },
+  rideDetailNumberText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  rideDetailText: {
+    flex: 1,
+  },
+  rideDetailLabel: {
+    color: "#212529",
     fontSize: 13,
-    marginTop: 7,
+    fontWeight: "600",
+  },
+  rideDetailMeta: {
+    color: "#6c757d",
+    fontSize: 12,
+    marginTop: 2,
   },
   routeStopLine: {
     fontSize: 13,
@@ -2250,10 +2943,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
   },
+  tripFareLegContainer: {
+    paddingVertical: 5,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e2e8f0",
+  },
   tripFareRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingVertical: 4,
+    alignItems: "center",
+    paddingVertical: 2,
+  },
+  tripFareNote: {
+    color: "#64748b",
+    fontSize: 11,
+    marginTop: 2,
   },
   tripFareLabel: {
     flex: 1,

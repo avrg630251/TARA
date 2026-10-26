@@ -1,8 +1,10 @@
 import { Link } from "expo-router";
+import * as Linking from "expo-linking";
 import { useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -12,6 +14,13 @@ import {
 import { AuthScreen } from "@/components/AuthScreen";
 import { PasswordField } from "@/components/PasswordField";
 import { supabase } from "@/lib/supabase";
+
+function getEmailRedirectUrl(): string {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return `${window.location.origin}/auth/callback`;
+  }
+  return Linking.createURL("auth/callback");
+}
 
 export default function SignupScreen() {
   const [fullName, setFullName] = useState("");
@@ -47,6 +56,7 @@ export default function SignupScreen() {
         data: {
           full_name: fullName.trim(),
         },
+        emailRedirectTo: getEmailRedirectUrl(),
       },
     });
     setSubmitting(false);

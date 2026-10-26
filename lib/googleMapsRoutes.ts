@@ -12,15 +12,19 @@ async function fetchWithTimeout(
   input: string,
   timeoutMs = 12000
 ): Promise<Response> {
+  const controller = new AbortController();
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(
-      () => reject(new Error("Google Maps request timed out. Check your connection.")),
+      () => {
+        controller.abort();
+        reject(new Error("Google Maps request timed out. Check your connection."));
+      },
       timeoutMs
     );
   });
   try {
-    return await Promise.race([fetch(input), timeout]);
+    return await Promise.race([fetch(input, { signal: controller.signal }), timeout]);
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }

@@ -77,19 +77,21 @@ export default function MainLayout() {
           }}
         />
         <Tabs.Screen
+          name="schedule"
+          options={{
+            title: "Schedule",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="calendar-outline" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
+            ),
+          }}
+        />
+        <Tabs.Screen
           name="profile"
           options={{
             title: "Profile",
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="person-outline" size={size ?? 24} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
-          }}
-        />
-        {/* Keep Schedule reachable from Profile, but never render it in the tab bar. */}
-        <Tabs.Screen
-          name="schedule"
-          options={{
-            href: null,
           }}
         />
       </Tabs>

@@ -20,6 +20,7 @@ import {
 import { MapPreview } from "@/components/MapPreview";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
+import { normalizeTravelFare } from "@/lib/transitRoutes";
 
 const GREEN = "#1C5141";
 const GREEN_HEADING = "#1C5141";
@@ -178,46 +179,59 @@ export default function HomeScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.recentCarousel}
           >
-            {bookmarkPreview.map((t) => (
-              <View key={t.key} style={[styles.routeCard, { width: cardWidth }]}>
-                <View style={styles.chipRow}>
-                  <View style={styles.chip}>
-                    <Text style={styles.chipText}>
-                      {formatTripDate(t.savedAt)}
-                    </Text>
+            {bookmarkPreview.map((t) => {
+              const normalized = normalizeTravelFare({
+                routeName: t.routeName,
+                originLabel: t.originLabel,
+                destinationLabel: t.destinationLabel,
+                boardStop: t.boardStop,
+                offStop: t.offStop,
+                fareText: t.fareText,
+                fareValue: t.fareValue,
+                segments: t.segments,
+                polyline: t.polyline,
+              });
+              return (
+                <View key={t.key} style={[styles.routeCard, { width: cardWidth }]}>
+                  <View style={styles.chipRow}>
+                    <View style={styles.chip}>
+                      <Text style={styles.chipText}>
+                        {formatTripDate(t.savedAt)}
+                      </Text>
+                    </View>
+                    <View style={styles.chip}>
+                      <Text style={styles.chipText}>
+                        {t.routeName}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.chip}>
-                    <Text style={styles.chipText}>
-                      {t.routeName}
-                    </Text>
+                  <Text style={styles.fromTo} numberOfLines={2}>
+                    <Text style={styles.fromToLabel}>From: </Text>
+                    {t.originLabel}
+                  </Text>
+                  <Text style={styles.fromTo} numberOfLines={2}>
+                    <Text style={styles.fromToLabel}>To: </Text>
+                    {t.destinationLabel}
+                  </Text>
+                  <View style={styles.etaRow}>
+                    <Text style={styles.etaLabel}>Fare: </Text>
+                    <Ionicons name="wallet-outline" size={16} color="#212529" />
+                    <Text style={styles.etaValue}> {normalized.fareText}</Text>
                   </View>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.reRouteBtn,
+                      pressed && styles.reRouteBtnPressed,
+                    ]}
+                    onPress={() =>
+                      openSearchWithRoute(t.originLabel, t.destinationLabel)
+                    }
+                  >
+                    <Text style={styles.reRouteBtnText}>Re-Route</Text>
+                  </Pressable>
                 </View>
-                <Text style={styles.fromTo} numberOfLines={2}>
-                  <Text style={styles.fromToLabel}>From: </Text>
-                  {t.originLabel}
-                </Text>
-                <Text style={styles.fromTo} numberOfLines={2}>
-                  <Text style={styles.fromToLabel}>To: </Text>
-                  {t.destinationLabel}
-                </Text>
-                <View style={styles.etaRow}>
-                  <Text style={styles.etaLabel}>Fare: </Text>
-                  <Ionicons name="time-outline" size={16} color="#212529" />
-                  <Text style={styles.etaValue}> {t.fareText}</Text>
-                </View>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.reRouteBtn,
-                    pressed && styles.reRouteBtnPressed,
-                  ]}
-                  onPress={() =>
-                    openSearchWithRoute(t.originLabel, t.destinationLabel)
-                  }
-                >
-                  <Text style={styles.reRouteBtnText}>Re-Route</Text>
-                </Pressable>
-              </View>
-            ))}
+              );
+            })}
           </ScrollView>
         )}
       </ScrollView>

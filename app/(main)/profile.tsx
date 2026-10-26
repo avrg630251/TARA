@@ -20,6 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
 import { supabase } from "@/lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { User } from "@supabase/supabase-js";
 
 const GREEN = "#1C5141";
@@ -35,6 +36,10 @@ function fullNameFromUser(user: User | undefined) {
         ? meta.name.trim()
         : "";
   return full;
+}
+
+function avatarKeyForUser(user: User | undefined) {
+  return `tara:avatar:${user?.id ?? "current"}`;
 }
 
 function avatarFromUser(user: User | undefined) {
@@ -76,7 +81,19 @@ export default function ProfileScreen() {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(fullNameFromUser(user));
       setSchool(schoolFromUser(user));
-      setAvatarUrl(avatarFromUser(user));
+      const remoteAvatar = avatarFromUser(user);
+      if (remoteAvatar) {
+        setAvatarUrl(remoteAvatar);
+        AsyncStorage.setItem(avatarKeyForUser(user), remoteAvatar).catch(() => {});
+      } else {
+        AsyncStorage.getItem(avatarKeyForUser(user))
+          .then((local) => {
+            if (local) {
+              setAvatarUrl(local);
+            }
+          })
+          .catch(() => {});
+      }
       setDiscountType(
         user.user_metadata?.discount_type === "discounted" ? "discounted" : "regular"
       );
@@ -96,10 +113,10 @@ export default function ProfileScreen() {
     () =>
       recentTrips.reduce((total, trip) => {
         if (typeof trip.fareValue === "number" && Number.isFinite(trip.fareValue)) {
-          return total + trip.fareValue;
+          return total + Math.ceil(trip.fareValue);
         }
         const match = trip.fareText?.match(/(?:₱|PHP|Php)\s*([0-9]+(?:\.[0-9]+)?)/i);
-        return total + (match ? Number(match[1]) : 0);
+        return total + (match ? Math.ceil(Number(match[1])) : 0);
       }, 0),
     [recentTrips]
   );
@@ -119,11 +136,52 @@ export default function ProfileScreen() {
       mediaTypes: ["images"],
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.8,
+      quality: 0.6,
+      base64: true,
     });
     setPickingImage(false);
-    if (!result.canceled) {
-      setAvatarUrl(result.assets[0].uri);
+    if (!result.canceled && result.assets?.[0]) {
+      const asset = result.assets[0];
+      const localUri = asset.uri;
+      const base64Uri = asset.base64
+        ? `data:image/jpeg;base64,${asset.base64}`
+        : localUri;
+
+      setAvatarUrl(localUri);
+
+      // Persist locally immediately so profile picture never disappears
+      const key = avatarKeyForUser(user);
+      await AsyncStorage.setItem(key, base64Uri).catch(() => {});
+
+      // Attempt to sync to Supabase in background
+      let savedUrl = base64Uri;
+      try {
+        const response = await fetch(localUri);
+        const blob = await response.blob();
+        const path = `${user?.id}/avatar`;
+        const { error: uploadError } = await supabase.storage
+          .from("avatars")
+          .upload(path, blob, {
+            upsert: true,
+            contentType: blob.type || "image/jpeg",
+          });
+        if (!uploadError) {
+          savedUrl = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+          await AsyncStorage.setItem(key, savedUrl).catch(() => {});
+        }
+      } catch {
+        /* storage upload fallback to base64 */
+      }
+
+      try {
+        await supabase.auth.updateUser({
+          data: {
+            avatar_url: savedUrl,
+          },
+        });
+      } catch (err) {
+        console.warn("Could not sync avatar to Supabase:", err);
+      }
     }
   }
 
@@ -141,21 +199,20 @@ export default function ProfileScreen() {
     setSaving(true);
     let savedAvatarUrl = avatarUrl;
     if (avatarUrl && avatarUrl !== avatarFromUser(user)) {
-      const response = await fetch(avatarUrl);
-      const blob = await response.blob();
-      const path = `${user?.id}/avatar`;
-      const { error: uploadError } = await supabase.storage
-        .from("avatars")
-        .upload(path, blob, { upsert: true, contentType: blob.type || "image/jpeg" });
-      if (uploadError) {
-        setSaving(false);
-        Alert.alert(
-          "Could not upload picture",
-          `${uploadError.message} Create the public "avatars" storage bucket in Supabase first.`
-        );
-        return;
+      try {
+        const response = await fetch(avatarUrl);
+        const blob = await response.blob();
+        const path = `${user?.id}/avatar`;
+        const { error: uploadError } = await supabase.storage
+          .from("avatars")
+          .upload(path, blob, { upsert: true, contentType: blob.type || "image/jpeg" });
+        if (!uploadError) {
+          savedAvatarUrl = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+        }
+      } catch {
+        /* fallback to keeping existing avatar */
       }
-      savedAvatarUrl = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+      await AsyncStorage.setItem(avatarKeyForUser(user), savedAvatarUrl).catch(() => {});
     }
     const { error } = await supabase.auth.updateUser({
       data: {
@@ -270,7 +327,7 @@ export default function ProfileScreen() {
             label="Change Password"
             onPress={() => setPasswordVisible(true)}
           />
-          <MenuRow icon="calendar-outline" label="Schedule" onPress={() => router.push("/schedule")} />
+          <MenuRow icon="calendar-outline" label="Schedule" onPress={() => router.push("/(main)/schedule")} />
         </View>
 
         <Text style={styles.sectionLabel}>Account</Text>

@@ -14,6 +14,7 @@ export type DisplayRoutePlan = {
   offStop: string;
   etaMinutes?: number | null;
   fareValue?: number | null;
+  soloFareValue?: number | null;
   generalizedCost?: number | null;
   transferCount?: number | null;
   /** Google path for this option (may be shared with another option). */
@@ -26,6 +27,7 @@ export type DisplayRoutePlan = {
   customFareValue?: number | null;
   segments?: DisplayRouteSegment[];
   boardingCoordinate?: LatLng;
+  vehicleType?: "jeepney" | "bus";
 };
 
 export type DisplayRouteSegment = {
@@ -172,6 +174,9 @@ function buildDbOnlyPlans(
       polyline: db.geometry,
       fromGoogle: false,
       dbRouteId: db.route_id,
+      vehicleType: db.route_type === 3 || /bus/i.test(db.route_long_name ?? "")
+        ? "bus"
+        : "jeepney",
     });
   }
   return plans;
@@ -264,6 +269,8 @@ export function composeTransitPlanOptions(args: {
       fromGoogle: true,
       googleSummary: itin.summary,
       dbRouteId: db?.route_id,
+      vehicleType:
+        db?.route_type === 3 || /bus/i.test(lineTitle) ? "bus" : "jeepney",
     });
   }
 

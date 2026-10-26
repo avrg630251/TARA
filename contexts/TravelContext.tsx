@@ -1,4 +1,5 @@
 import type { DisplayRoutePlan } from "@/lib/transitPlanOptions";
+import { normalizeTravelFare } from "@/lib/transitRoutes";
 import {
   bookmarksEqual,
   loadBookmarks,
@@ -16,6 +17,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -29,10 +31,12 @@ type TravelContextValue = {
   ready: boolean;
   bookmarks: SavedRouteBookmark[];
   recentTrips: RecentTrip[];
+  refreshRecentTrips: () => Promise<void>;
+  refreshTravelData: () => Promise<void>;
   isBookmarked: (plan: DisplayRoutePlan, meta: TravelMeta) => boolean;
   toggleBookmark: (plan: DisplayRoutePlan, meta: TravelMeta) => Promise<void>;
-  removeBookmark: (key: string) => void;
-  addRecentFromTrip: (plan: DisplayRoutePlan, meta: TravelMeta) => void;
+  removeBookmark: (key: string) => Promise<void>;
+  addRecentFromTrip: (plan: DisplayRoutePlan, meta: TravelMeta) => Promise<void>;
   removeRecent: (key: string) => void;
 };
 
@@ -42,15 +46,33 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [bookmarks, setBookmarks] = useState<SavedRouteBookmark[]>([]);
   const [recentTrips, setRecentTrips] = useState<RecentTrip[]>([]);
+  const recentTripsRef = useRef<RecentTrip[]>([]);
+
+  const refreshTravelData = useCallback(async () => {
+    try {
+      const [b, r] = await Promise.all([loadBookmarks(), loadRecentTrips()]);
+      setBookmarks(bookmarksEqual(b));
+      recentTripsRef.current = r;
+      setRecentTrips(r);
+    } catch (error) {
+      console.error("[TARA] Could not refresh travel data.", error);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [b, r] = await Promise.all([loadBookmarks(), loadRecentTrips()]);
-      if (cancelled) return;
-      setBookmarks(bookmarksEqual(b));
-      setRecentTrips(r);
-      setReady(true);
+      try {
+        const [b, r] = await Promise.all([loadBookmarks(), loadRecentTrips()]);
+        if (cancelled) return;
+        setBookmarks(bookmarksEqual(b));
+        setRecentTrips(r);
+        recentTripsRef.current = r;
+      } catch (error) {
+        console.error("[TARA] Could not load saved travel data.", error);
+      } finally {
+        if (!cancelled) setReady(true);
+      }
     })();
     return () => {
       cancelled = true;
@@ -77,6 +99,18 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         meta.destinationLabel
       );
       const exists = bookmarks.some((x) => x.key === key);
+      const normalizedFare = normalizeTravelFare({
+        routeName: plan.routeName,
+        originLabel: meta.originLabel,
+        destinationLabel: meta.destinationLabel,
+        boardStop: plan.boardStop,
+        offStop: plan.offStop,
+        fareText: plan.fareText,
+        fareValue: plan.fareValue,
+        segments: plan.segments,
+        polyline: plan.polyline,
+        vehicleType: plan.vehicleType,
+      });
       const next =
         exists
           ? bookmarks.filter((x) => x.key !== key)
@@ -90,7 +124,9 @@ export function TravelProvider({ children }: { children: ReactNode }) {
                 boardStop: plan.boardStop,
                 offStop: plan.offStop,
                 estimatedText: plan.estimatedText,
-                fareText: plan.fareText,
+                fareText: normalizedFare.fareText,
+                fareValue: normalizedFare.fareValue,
+                segments: plan.segments,
                 polyline: plan.polyline,
                 savedAt: new Date().toISOString(),
               } satisfies SavedRouteBookmark,
@@ -113,23 +149,36 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   const addRecentFromTrip = useCallback(
     async (plan: DisplayRoutePlan, meta: TravelMeta) => {
       const startedAt = new Date().toISOString();
-      const item: RecentTrip = {
-        key: `${makeBookmarkKey(plan.id, meta.originLabel, meta.destinationLabel)}|${startedAt}`,
+      const normalizedFare = normalizeTravelFare({
+        routeName: plan.routeName,
         originLabel: meta.originLabel,
         destinationLabel: meta.destinationLabel,
+        boardStop: plan.boardStop,
+        offStop: plan.offStop,
+        fareText: plan.fareText,
+        fareValue: plan.fareValue,
+        segments: plan.segments,
+        polyline: plan.polyline,
+        vehicleType: plan.vehicleType,
+      });
+      const item: RecentTrip = {
+        key: `${makeBookmarkKey(plan.id, meta.originLabel, meta.destinationLabel)}|${startedAt}`,
+        originLabel: meta.originLabel || "Current Location",
+        destinationLabel: meta.destinationLabel || "De La Salle Araneta University",
         etaText: plan.estimatedText,
         routeName: plan.routeName,
         boardStop: plan.boardStop,
         offStop: plan.offStop,
-        fareText: plan.fareText,
-        fareValue: plan.fareValue ?? null,
+        fareText: normalizedFare.fareText,
+        fareValue: normalizedFare.fareValue,
+        segments: plan.segments,
+        polyline: plan.polyline,
         startedAt,
       };
-      setRecentTrips((prev) => {
-        const next = mergeRecentTrips(prev, item);
-        void persistRecentTrips(next);
-        return next;
-      });
+      const next = mergeRecentTrips(recentTripsRef.current, item);
+      recentTripsRef.current = next;
+      setRecentTrips(next);
+      await persistRecentTrips(next);
     },
     []
   );
@@ -137,6 +186,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   const removeRecent = useCallback((key: string) => {
     setRecentTrips((prev) => {
       const next = prev.filter((x) => x.key !== key);
+      recentTripsRef.current = next;
       void persistRecentTrips(next);
       return next;
     });
@@ -147,6 +197,8 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       ready,
       bookmarks,
       recentTrips,
+      refreshRecentTrips: refreshTravelData,
+      refreshTravelData,
       isBookmarked,
       toggleBookmark,
       removeBookmark,
@@ -157,6 +209,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       ready,
       bookmarks,
       recentTrips,
+      refreshTravelData,
       isBookmarked,
       toggleBookmark,
       removeBookmark,

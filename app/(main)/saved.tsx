@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,44 +11,125 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { useTravel } from "@/contexts/TravelContext";
+import { normalizeTravelFare } from "@/lib/transitRoutes";
 
 const GREEN = "#1B4332";
 
+type HistoryFilter = "all" | "recent" | "saved";
+
+type DisplayHistoryItem = {
+  key: string;
+  type: "recent" | "bookmark";
+  title: string;
+  from: string;
+  to: string;
+  meta: string;
+  board: string;
+  off: string;
+  fareText: string;
+  savedAt: string;
+  badge: "COMPLETED TRIP" | "SAVED ROUTE";
+};
+
 export default function SavedScreen() {
   const router = useRouter();
-  const { recentTrips } = useTravel();
+  const {
+    ready,
+    bookmarks,
+    recentTrips,
+    refreshTravelData,
+    removeRecent,
+    removeBookmark,
+  } = useTravel();
   const { width } = useWindowDimensions();
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<HistoryFilter>("all");
   const isDesktop = width >= 768;
 
-  const items = useMemo(() => {
+  useFocusEffect(
+    useCallback(() => {
+      void refreshTravelData();
+    }, [refreshTravelData])
+  );
+
+  const items = useMemo<DisplayHistoryItem[]>(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
-    const list = recentTrips.map((t) => ({
+    const recentList: DisplayHistoryItem[] = recentTrips.map((t) => {
+      const normalized = normalizeTravelFare({
+        routeName: t.routeName,
+        originLabel: t.originLabel,
+        destinationLabel: t.destinationLabel,
+        boardStop: t.boardStop,
+        offStop: t.offStop,
+        fareText: t.fareText,
+        fareValue: t.fareValue,
+        segments: t.segments,
+        polyline: t.polyline,
+      });
+      return {
         key: t.key,
+        type: "recent",
         title: t.routeName || `${t.originLabel} - ${t.destinationLabel}`,
-        from: t.originLabel,
-        to: t.destinationLabel,
+        from: t.originLabel || "Current Location",
+        to: t.destinationLabel || "De La Salle Araneta University",
         meta: `${t.etaText} · ${t.routeName}`,
-        board: t.boardStop,
-        off: t.offStop,
-        polyline: undefined,
+        board: t.boardStop || "Designated stop",
+        off: t.offStop || "Destination",
+        fareText: normalized.fareText,
         savedAt: t.startedAt,
-        badge: "COMPLETED" as const,
-      }));
+        badge: "COMPLETED TRIP",
+      };
+    });
 
-    const filtered = normalizedQuery
-      ? list.filter(({ title, from, to }) => {
-          const haystack = `${title} ${from} ${to}`.toLowerCase();
-          return haystack.includes(normalizedQuery);
-        })
-      : list;
+    const bookmarkList: DisplayHistoryItem[] = bookmarks.map((b) => {
+      const normalized = normalizeTravelFare({
+        routeName: b.routeName,
+        originLabel: b.originLabel,
+        destinationLabel: b.destinationLabel,
+        boardStop: b.boardStop,
+        offStop: b.offStop,
+        fareText: b.fareText,
+        fareValue: b.fareValue,
+        segments: b.segments,
+        polyline: b.polyline,
+      });
+      return {
+        key: b.key,
+        type: "bookmark",
+        title: b.routeName || `${b.originLabel} - ${b.destinationLabel}`,
+        from: b.originLabel || "Current Location",
+        to: b.destinationLabel || "De La Salle Araneta University",
+        meta: `${b.estimatedText} · ${normalized.fareText}`,
+        board: b.boardStop || "Designated stop",
+        off: b.offStop || "Destination",
+        fareText: normalized.fareText,
+        savedAt: b.savedAt,
+        badge: "SAVED ROUTE",
+      };
+    });
 
-    return filtered;
-  }, [query, recentTrips]);
+    let combined: DisplayHistoryItem[] = [];
+    if (filter === "recent") {
+      combined = recentList;
+    } else if (filter === "saved") {
+      combined = bookmarkList;
+    } else {
+      combined = [...recentList, ...bookmarkList].sort(
+        (a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime()
+      );
+    }
+
+    if (!normalizedQuery) return combined;
+
+    return combined.filter(({ title, from, to }) => {
+      const haystack = `${title} ${from} ${to}`.toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [query, filter, recentTrips, bookmarks]);
 
   function openSearch(origin: string, destination: string) {
     router.push({
@@ -56,9 +138,30 @@ export default function SavedScreen() {
     });
   }
 
+  function handleDelete(item: DisplayHistoryItem) {
+    Alert.alert(
+      item.type === "recent" ? "Remove from history" : "Remove saved route",
+      "Are you sure you want to delete this item?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            if (item.type === "recent") {
+              removeRecent(item.key);
+            } else {
+              void removeBookmark(item.key);
+            }
+          },
+        },
+      ]
+    );
+  }
+
   function formatSavedDate(value: string) {
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "Saved trip";
+    if (Number.isNaN(date.getTime())) return "Trip record";
     return date.toLocaleDateString(undefined, {
       weekday: "short",
       day: "numeric",
@@ -87,7 +190,7 @@ export default function SavedScreen() {
             <TextInput
               value={query}
               onChangeText={setQuery}
-              placeholder="Search"
+              placeholder="Search history or saved routes..."
               placeholderTextColor="#94a3b8"
               style={styles.searchInput}
               accessibilityLabel="Search route history"
@@ -95,85 +198,145 @@ export default function SavedScreen() {
             <Ionicons name="search-outline" size={20} color="#64748b" />
           </View>
 
+          <View style={styles.filterRow}>
+            {(
+              [
+                { key: "all" as const, label: "All" },
+                { key: "recent" as const, label: "Recent Trips" },
+                { key: "saved" as const, label: "Saved Routes" },
+              ] as const
+            ).map((opt) => (
+              <Pressable
+                key={opt.key}
+                onPress={() => setFilter(opt.key)}
+                style={[
+                  styles.filterChip,
+                  filter === opt.key && styles.filterChipActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    filter === opt.key && styles.filterChipTextActive,
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={styles.content}
             showsVerticalScrollIndicator={false}
           >
-          {items.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>No route history yet.</Text>
-            </View>
-          ) : (
-            items.map((item) => (
-              <View key={item.key} style={styles.tripCard}>
-                <View style={styles.tripCardHeader}>
-                  <Text style={styles.tripDate}>
-                    {formatSavedDate(item.savedAt)}
-                  </Text>
-                  <Text style={styles.tripTime}>Completed trip</Text>
-                </View>
-
-                <View style={styles.mapPreview}>
-                  <View style={styles.mapUnavailable}>
-                    <Ionicons name="map-outline" size={38} color="#8aa49b" />
-                    <Text style={styles.mapUnavailableText}>Route map preview</Text>
-                  </View>
-                </View>
-
-                <View style={styles.tripBody}>
-                  <View style={styles.statusPill}>
-                    <Ionicons name="checkmark-circle" size={14} color="#fff" />
-                    <Text style={styles.statusText}>Completed</Text>
-                  </View>
-
-                  <Text style={styles.locationText}>{"\u{1F4CD}"} {item.from}</Text>
-                  <Text style={styles.locationText}>{"\u{2691}"} {item.to}</Text>
-
-                  <View style={styles.metricsGrid}>
-                    <View style={styles.metricBox}>
-                      <Text style={styles.metricLabel}>◷ Duration</Text>
-                      <Text style={styles.metricValue}>{item.meta.split(" · ")[0]}</Text>
-                    </View>
-                    <View style={styles.metricBox}>
-                      <Text style={styles.metricLabel}>⇢ Route</Text>
-                      <Text style={styles.metricValue} numberOfLines={1}>{item.title}</Text>
-                    </View>
-                    <View style={styles.metricBox}>
-                      <Text style={styles.metricLabel}>⇄ Transfers</Text>
-                      <Text style={styles.metricValue}>Board: {item.board}</Text>
-                    </View>
-                    <View style={styles.metricBox}>
-                      <Text style={styles.metricLabel}>₱ Est. Fare</Text>
-                      <Text style={styles.metricValue}>{item.meta.split(" · ")[1] ?? "—"}</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.sectionCard}>
-                    <Text style={styles.sectionTitle}>Estimated Fare Breakdown</Text>
-                    <View style={styles.fareRow}>
-                      <Text style={styles.fareLabel}>Total</Text>
-                      <Text style={styles.fareValue}>{item.meta.split(" · ")[1] ?? "—"}</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.sectionCard}>
-                    <Text style={styles.sectionTitle}>Step-by-Step Instructions</Text>
-                    <Text style={styles.instructionText}>Board at {item.board}</Text>
-                    <Text style={styles.instructionText}>Get off at {item.off}</Text>
-                  </View>
-
-                  <Pressable
-                    style={styles.primaryButton}
-                    onPress={() => openSearch(item.from, item.to)}
-                  >
-                    <Ionicons name="repeat" size={18} color="#fff" />
-                    <Text style={styles.primaryButtonText}>Repeat this trip</Text>
-                  </Pressable>
-                </View>
+            {!ready ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>Loading history...</Text>
               </View>
-            ))
-          )}
+            ) : items.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="time-outline" size={48} color="#94a3b8" />
+                <Text style={styles.emptyTitle}>No history yet</Text>
+                <Text style={styles.emptyText}>
+                  {filter === "saved"
+                    ? "Bookmark your preferred routes in Search to see them here."
+                    : filter === "recent"
+                      ? "Routes you start will automatically appear in your recent trips."
+                      : "Search for a route and start a trip, or bookmark routes to easily find them later."}
+                </Text>
+              </View>
+            ) : (
+              items.map((item) => (
+                <View key={item.key} style={styles.tripCard}>
+                  <View style={styles.tripCardHeader}>
+                    <View style={styles.tripCardHeaderLeft}>
+                      <Text style={styles.tripDate}>
+                        {formatSavedDate(item.savedAt)}
+                      </Text>
+                      <Text style={styles.tripTime}>
+                        {item.type === "recent" ? "Completed Trip" : "Bookmarked Route"}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => handleDelete(item)}
+                      hitSlop={8}
+                      accessibilityLabel="Delete record"
+                      style={styles.deleteBtn}
+                    >
+                      <Ionicons name="trash-outline" size={18} color="#fff" />
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.tripBody}>
+                    <View
+                      style={[
+                        styles.statusPill,
+                        item.type === "bookmark" && styles.statusPillSaved,
+                      ]}
+                    >
+                      <Ionicons
+                        name={item.type === "recent" ? "checkmark-circle" : "bookmark"}
+                        size={14}
+                        color="#fff"
+                      />
+                      <Text style={styles.statusText}>{item.badge}</Text>
+                    </View>
+
+                    <Text style={styles.locationText}>
+                      {"\u{1F4CD}"} From: {item.from}
+                    </Text>
+                    <Text style={styles.locationText}>
+                      {"\u{2691}"} To: {item.to}
+                    </Text>
+
+                    <View style={styles.metricsGrid}>
+                      <View style={styles.metricBox}>
+                        <Text style={styles.metricLabel}>Duration</Text>
+                        <Text style={styles.metricValue}>
+                          {item.meta.split(" · ")[0] || "—"}
+                        </Text>
+                      </View>
+                      <View style={styles.metricBox}>
+                        <Text style={styles.metricLabel}>Route</Text>
+                        <Text style={styles.metricValue} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                      </View>
+                      <View style={styles.metricBox}>
+                        <Text style={styles.metricLabel}>Boarding</Text>
+                        <Text style={styles.metricValue} numberOfLines={1}>
+                          {item.board}
+                        </Text>
+                      </View>
+                      <View style={styles.metricBox}>
+                        <Text style={styles.metricLabel}>Est. Fare</Text>
+                        <Text style={styles.metricValue}>{item.fareText}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.sectionCard}>
+                      <Text style={styles.sectionTitle}>Stop Details</Text>
+                      <Text style={styles.instructionText}>
+                        Board at: {item.board}
+                      </Text>
+                      <Text style={styles.instructionText}>
+                        Get off at: {item.off}
+                      </Text>
+                    </View>
+
+                    <Pressable
+                      style={styles.primaryButton}
+                      onPress={() => openSearch(item.from, item.to)}
+                    >
+                      <Ionicons name="repeat" size={18} color="#fff" />
+                      <Text style={styles.primaryButtonText}>Repeat this trip</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))
+            )}
           </ScrollView>
         </View>
       </View>
@@ -198,6 +361,7 @@ const styles = StyleSheet.create({
   contentShell: {
     width: "100%",
     maxWidth: 920,
+    flex: 1,
   },
   desktopShell: {
     paddingTop: 12,
@@ -219,27 +383,49 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: "center",
     marginRight: 38,
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: "700",
     color: GREEN,
   },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f5f7f8",
+    backgroundColor: "#fff",
     borderColor: "#dbe2e8",
     borderWidth: 1,
-    borderRadius: 18,
-    height: 48,
-    paddingHorizontal: 16,
-    marginTop: 18,
-    marginBottom: 14,
+    borderRadius: 16,
+    height: 46,
+    paddingHorizontal: 14,
+    marginTop: 14,
+    marginBottom: 10,
   },
   searchInput: {
     flex: 1,
     color: "#1f2937",
-    fontSize: 16,
-    paddingRight: 12,
+    fontSize: 15,
+    paddingRight: 10,
+  },
+  filterRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: "#e2e8f0",
+  },
+  filterChipActive: {
+    backgroundColor: GREEN,
+  },
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  filterChipTextActive: {
+    color: "#fff",
   },
   scroll: {
     flex: 1,
@@ -248,185 +434,115 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   tripCard: {
-    backgroundColor: "#f7f7f7",
-    borderRadius: 18,
-    marginBottom: 18,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    marginBottom: 16,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
     shadowColor: "#000",
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.08,
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    elevation: 2,
   },
   tripCardHeader: {
     backgroundColor: GREEN,
-    minHeight: 58,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+    minHeight: 52,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "space-between",
+  },
+  tripCardHeaderLeft: {
+    flex: 1,
   },
   tripDate: {
     color: "#fff",
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "700",
   },
   tripTime: {
     color: "#d8eee5",
     fontSize: 11,
-    marginTop: 2,
+    marginTop: 1,
   },
-  mapPreview: {
-    height: 170,
-    margin: 10,
-    borderRadius: 16,
-    overflow: "hidden",
-    backgroundColor: "#e5ece9",
-    position: "relative",
-  },
-  mapUnavailable: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mapUnavailableText: {
-    color: "#6b8b80",
-    fontSize: 12,
-    marginTop: 6,
+  deleteBtn: {
+    padding: 6,
+    opacity: 0.85,
   },
   tripBody: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
+    padding: 14,
   },
   statusPill: {
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    borderRadius: 12,
+    borderRadius: 10,
     backgroundColor: GREEN,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     marginBottom: 8,
+  },
+  statusPillSaved: {
+    backgroundColor: "#0284C7",
   },
   statusText: {
     color: "#fff",
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "700",
   },
   locationText: {
     color: "#1f2937",
     fontSize: 14,
-    marginBottom: 7,
+    marginBottom: 4,
+    fontWeight: "500",
   },
   metricsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginTop: 5,
+    marginTop: 8,
     marginBottom: 10,
   },
   metricBox: {
-    width: "48%",
-    minHeight: 52,
-    borderRadius: 6,
-    backgroundColor: "#245f4f",
+    flex: 1,
+    minWidth: "45%",
+    borderRadius: 8,
+    backgroundColor: "#f1f5f9",
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
   metricLabel: {
-    color: "#d8eee5",
+    color: "#64748b",
     fontSize: 10,
-    marginBottom: 3,
+    fontWeight: "600",
+    marginBottom: 2,
+    textTransform: "uppercase",
   },
   metricValue: {
-    color: "#fff",
+    color: "#0f172a",
     fontSize: 12,
     fontWeight: "700",
   },
   sectionCard: {
-    backgroundColor: "#fff",
-    borderRadius: 13,
-    padding: 12,
-    marginTop: 8,
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    padding: 10,
+    marginVertical: 8,
     borderWidth: 1,
-    borderColor: "#e4e7e6",
+    borderColor: "#e2e8f0",
   },
   sectionTitle: {
-    color: "#245f4f",
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  fareRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-    paddingTop: 8,
-  },
-  fareLabel: {
-    color: "#374151",
-    fontSize: 12,
-  },
-  fareValue: {
-    color: "#245f4f",
+    color: "#334155",
     fontSize: 12,
     fontWeight: "700",
+    marginBottom: 4,
   },
   instructionText: {
     color: "#475569",
-    fontSize: 12,
-    marginTop: 5,
-  },
-  cardIconWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  routeIconOuter: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#eaf1ee",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 8,
-  },
-  routeIconInner: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#eaf1ee",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  routeDetails: {
-    marginBottom: 10,
-  },
-  routeTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#1f2937",
-    marginBottom: 6,
-    lineHeight: 26,
-  },
-  routeMeta: {
-    fontSize: 14,
-    color: "#475569",
-    lineHeight: 20,
-  },
-  metaRow: {
-    marginTop: 6,
-    marginBottom: 2,
-  },
-  metaText: {
-    color: "#374151",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  microText: {
-    color: "#64748b",
     fontSize: 12,
     marginTop: 2,
   },
@@ -434,22 +550,33 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
     backgroundColor: GREEN,
-    borderRadius: 14,
-    height: 44,
+    borderRadius: 12,
+    height: 42,
     alignItems: "center",
     justifyContent: "center",
+    marginTop: 6,
   },
   primaryButtonText: {
     color: "#fff",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "700",
   },
   emptyState: {
-    paddingVertical: 40,
+    paddingVertical: 60,
+    paddingHorizontal: 24,
     alignItems: "center",
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#334155",
+    marginTop: 12,
+    marginBottom: 6,
   },
   emptyText: {
     color: "#64748b",
-    fontSize: 15,
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
   },
 });
