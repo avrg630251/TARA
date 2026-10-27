@@ -15,35 +15,27 @@ if (!supabaseUrl || !supabaseAnonKey || supabaseUrl.includes("placeholder")) {
 }
 
 const customFetch: typeof fetch = async (input, init) => {
-  let attempts = 0;
-  const maxAttempts = 3;
-  while (attempts < maxAttempts) {
-    attempts++;
-    try {
-      return await fetch(input, init);
-    } catch (err: unknown) {
-      const msg = String(
-        (err as { message?: string })?.message ?? err ?? ""
-      );
-      const isTransient =
-        msg.includes("SocketException") ||
-        msg.includes("Connection reset") ||
-        msg.includes("Network request failed") ||
-        msg.includes("fetch failed") ||
-        msg.includes("CodedError") ||
-        msg.includes("Software caused connection abort");
+  try {
+    return await fetch(input, init);
+  } catch (err: unknown) {
+    const msg = String(
+      (err as { message?: string })?.message ?? err ?? ""
+    );
+    const isTransient =
+      msg.includes("SocketException") ||
+      msg.includes("Connection reset") ||
+      msg.includes("Network request failed") ||
+      msg.includes("fetch failed") ||
+      msg.includes("StreamResetException") ||
+      msg.includes("Broken pipe");
 
-      if (isTransient && attempts < maxAttempts) {
-        console.warn(
-          `[TARA] Network drop (${msg}), retrying request (${attempts}/${maxAttempts})...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, 350 * attempts));
-        continue;
-      }
-      throw err;
+    if (isTransient) {
+      console.warn(`[TARA] Network drop (${msg}), retrying on new connection...`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return await fetch(input, init);
     }
+    throw err;
   }
-  return fetch(input, init);
 };
 
 export const supabase = createClient(
