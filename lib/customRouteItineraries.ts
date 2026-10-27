@@ -41,31 +41,77 @@ export type CustomRouteResult = {
   fare: number | null;
 };
 
+async function queryWithRetry<T>(
+  queryFn: () => PromiseLike<{ data: T | null; error: any }>,
+  label: string,
+  maxRetries = 3
+): Promise<T> {
+  let attempts = 0;
+  while (attempts < maxRetries) {
+    attempts++;
+    try {
+      const res = await queryFn();
+      if (res.error) {
+        const msg = String(res.error?.message ?? res.error?.details ?? "");
+        const isTransient =
+          msg.includes("SocketException") ||
+          msg.includes("Connection reset") ||
+          msg.includes("Network request failed") ||
+          msg.includes("fetch failed");
+
+        if (isTransient && attempts < maxRetries) {
+          console.warn(
+            `[TARA] ${label} transient socket error (${msg}), retrying (${attempts}/${maxRetries})...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 350 * attempts));
+          continue;
+        }
+        console.error(`[TARA] Error in ${label}:`, res.error);
+        throw new Error(res.error.message || `${label} failed`);
+      }
+      return res.data as T;
+    } catch (err: unknown) {
+      const msg = String((err as { message?: string })?.message ?? err ?? "");
+      const isTransient =
+        msg.includes("SocketException") ||
+        msg.includes("Connection reset") ||
+        msg.includes("Network request failed") ||
+        msg.includes("fetch failed");
+
+      if (isTransient && attempts < maxRetries) {
+        console.warn(
+          `[TARA] ${label} network drop (${msg}), retrying (${attempts}/${maxRetries})...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 350 * attempts));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error(`${label} exceeded maximum retries`);
+}
+
 export async function fetchNearestCustomItinerary(
   origin: LatLng
 ): Promise<CustomRouteResult[]> {
-  const [firstSegmentsRes, pointsRes] = await Promise.all([
-    supabase
-      .from("custom_route_segments")
-      .select("*")
-      .eq("segment_sequence", 1),
-    supabase
-      .from("custom_route_points")
-      .select("*")
-      .eq("point_type", "terminal"),
+  const [firstSegmentRows, terminals] = await Promise.all([
+    queryWithRetry(
+      () =>
+        supabase
+          .from("custom_route_segments")
+          .select("*")
+          .eq("segment_sequence", 1),
+      "first custom route segments"
+    ).then((data) => (data ?? []) as CustomRouteSegment[]),
+    queryWithRetry(
+      () =>
+        supabase
+          .from("custom_route_points")
+          .select("*")
+          .eq("point_type", "terminal"),
+      "custom route terminals"
+    ).then((data) => (data ?? []) as CustomRoutePoint[]),
   ]);
-
-  if (firstSegmentsRes.error) {
-    console.error("[TARA] Error fetching first custom route segments:", firstSegmentsRes.error);
-    throw new Error(firstSegmentsRes.error.message);
-  }
-  if (pointsRes.error) {
-    console.error("[TARA] Error fetching custom route terminals:", pointsRes.error);
-    throw new Error(pointsRes.error.message);
-  }
-
-  const firstSegmentRows = (firstSegmentsRes.data ?? []) as CustomRouteSegment[];
-  const terminals = (pointsRes.data ?? []) as CustomRoutePoint[];
 
   if (!firstSegmentRows.length || !terminals.length) {
     console.warn("[TARA] No firstSegments or terminals found in database");
@@ -123,21 +169,17 @@ export async function fetchNearestCustomItinerary(
 
   const itineraryResults = await Promise.all(
     nearestByItinerary.map(async (nearest): Promise<CustomRouteResult | null> => {
-      const { data: segments, error: segmentsError } = await supabase
-        .from("custom_route_segments")
-        .select("*")
-        .eq("itinerary_id", nearest.terminal.itinerary_id!)
-        .order("segment_sequence", { ascending: true });
-      if (segmentsError) {
-        console.error(
-          "[TARA] Error fetching segments for itinerary:",
-          nearest.terminal.itinerary_id,
-          segmentsError
-        );
-        throw new Error(segmentsError.message);
-      }
+      const segments = await queryWithRetry(
+        () =>
+          supabase
+            .from("custom_route_segments")
+            .select("*")
+            .eq("itinerary_id", nearest.terminal.itinerary_id!)
+            .order("segment_sequence", { ascending: true }),
+        `segments for itinerary ${nearest.terminal.itinerary_id}`
+      ).then((data) => (data ?? []) as CustomRouteSegment[]);
 
-      let orderedSegments = (segments ?? []) as CustomRouteSegment[];
+      let orderedSegments = segments;
       if (!orderedSegments.length) return null;
 
       let boardingName = nearest.terminal.name;
@@ -165,19 +207,15 @@ export async function fetchNearestCustomItinerary(
 
       const destinationId =
         orderedSegments[orderedSegments.length - 1].destination_id;
-      const { data: destination, error: destinationError } = await supabase
-        .from("custom_route_points")
-        .select("*")
-        .eq("point_id", destinationId)
-        .single();
-      if (destinationError) {
-        console.error(
-          "[TARA] Error fetching destination point:",
-          destinationId,
-          destinationError
-        );
-        throw new Error(destinationError.message);
-      }
+      const destination = (await queryWithRetry(
+        () =>
+          supabase
+            .from("custom_route_points")
+            .select("*")
+            .eq("point_id", destinationId)
+            .single(),
+        `destination point ${destinationId}`
+      )) as CustomRoutePoint;
 
       const coordinates: LatLng[] = [];
       for (const segment of orderedSegments) {
