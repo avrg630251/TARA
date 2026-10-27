@@ -61,8 +61,8 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       setBookmarks(bookmarksEqual(b));
       recentTripsRef.current = r;
       setRecentTrips(r);
-    } catch (error) {
-      console.error("[TARA] Could not refresh travel data.", error);
+    } catch {
+      // Silently ignore travel data refresh errors
     }
   }, [userId]);
 
@@ -83,8 +83,8 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         setBookmarks(bookmarksEqual(b));
         setRecentTrips(r);
         recentTripsRef.current = r;
-      } catch (error) {
-        console.error("[TARA] Could not load saved travel data.", error);
+      } catch {
+        // Silently ignore travel data load errors
       } finally {
         if (!cancelled) setReady(true);
       }

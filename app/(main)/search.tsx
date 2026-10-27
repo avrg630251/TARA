@@ -1286,7 +1286,6 @@ export default function SearchMapScreen() {
           longitude: originGeo.lng,
         });
 
-      console.log("[TARA] Searching custom itineraries for origin:", originGeo);
       const customDestinations = await withTimeout(
         fetchNearestCustomItinerary({
           latitude: originGeo.lat,
@@ -1294,11 +1293,7 @@ export default function SearchMapScreen() {
         }),
         CUSTOM_ROUTE_DATA_TIMEOUT_MS,
         "Custom route data timed out."
-      ).catch((err) => {
-        console.warn("[TARA] Custom route fetch failed or timed out:", err);
-        return [];
-      });
-      console.log("[TARA] Custom itineraries count:", customDestinations.length);
+      ).catch(() => []);
 
       if (requestId !== routeRequestIdRef.current) return;
 

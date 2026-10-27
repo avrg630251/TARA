@@ -30,7 +30,6 @@ const customFetch: typeof fetch = async (input, init) => {
       msg.includes("Broken pipe");
 
     if (isTransient) {
-      console.warn(`[TARA] Network drop (${msg}), retrying on new connection...`);
       await new Promise((resolve) => setTimeout(resolve, 500));
       return await fetch(input, init);
     }
