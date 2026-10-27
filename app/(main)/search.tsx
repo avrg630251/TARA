@@ -30,10 +30,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
 import * as googleMapsRoutes from "@/lib/googleMapsRoutes";
 import {
-  fetchTransitItinerariesFromGoogle,
   geocodeAddress,
   getPlaceSuggestions,
-  getRouteBetween,
   type LatLng,
   type PlaceSuggestion,
 } from "@/lib/googleMapsRoutes";
@@ -44,7 +42,6 @@ import {
   sortRoutesForSchedule,
 } from "@/lib/classSchedules";
 import {
-  composeTransitPlanOptions,
   type DisplayRouteSegment,
   type DisplayRoutePlan,
 } from "@/lib/transitPlanOptions";
@@ -1421,87 +1418,10 @@ export default function SearchMapScreen() {
         return;
       }
 
-      const destGeo = {
-        lat: DLSAU_COORDINATE.latitude,
-        lng: DLSAU_COORDINATE.longitude,
-      };
-      if (
-        haversineMeters(
-          { lat: latitude, lng: longitude },
-          { lat: destGeo.lat, lng: destGeo.lng }
-        ) > MAX_ROUTE_RADIUS_METERS
-      ) {
-        throw new Error("This destination is outside the 500 km route radius.");
-      }
-      setDestinationCoord({
-        latitude: destGeo.lat,
-        longitude: destGeo.lng,
-      });
-
-      const googleItins = await fetchTransitItinerariesFromGoogle(
-        originGeo,
-        destGeo
-      );
       if (requestId !== routeRequestIdRef.current) return;
-
-      let overview: {
-        coordinates: LatLng[];
-        mode: string;
-        summary: string;
-      } | null = null;
-
-      if (googleItins.length === 0) {
-        const r = await getRouteBetween(originGeo, destGeo);
-        if (requestId !== routeRequestIdRef.current) return;
-        overview = {
-          coordinates: r.coordinates,
-          mode: r.mode,
-          summary: r.summary,
-        };
-      }
-
-      const finalizePlansAndBounds = async () => {
-        if (requestId !== routeRequestIdRef.current) return;
-        let plans = composeTransitPlanOptions({
-          itineraries: googleItins,
-          dbRoutes: [],
-          fallbackPolyline: overview?.coordinates,
-          limit: 3,
-        });
-        if (
-          plans.length === 0 &&
-          overview &&
-          overview.coordinates.length > 1
-        ) {
-          plans = [
-            {
-              id: "map-overview-fallback",
-              routeName:
-                overview.mode === "transit"
-                  ? "Transit (overview)"
-                  : "Driving fallback",
-              transfersText: "—",
-              estimatedText: "—",
-              fareText: "—",
-              boardStop: "—",
-              offStop: "—",
-              etaMinutes: null,
-              fareValue: null,
-              generalizedCost: null,
-              transferCount: null,
-              polyline: overview.coordinates,
-              fromGoogle: true,
-              googleSummary: overview.summary,
-            },
-          ];
-        }
-
-        setRoutePlans(plans);
-        setSelectedPlanId(plans[0]?.id ?? null);
-        setFitMapSignal((n) => n + 1);
-      };
-
-      await finalizePlansAndBounds();
+      clearRoute();
+      setRouteError("No custom routes found near this location.");
+      setRouteLoading(false);
     } catch (e: unknown) {
       if (requestId !== routeRequestIdRef.current) return;
       clearRoute();

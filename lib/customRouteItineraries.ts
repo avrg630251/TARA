@@ -1,4 +1,3 @@
-import { supabase } from "@/lib/supabase";
 import type { LatLng } from "@/lib/googleMapsRoutes";
 import {
   STATIC_CUSTOM_POINTS,
@@ -189,43 +188,7 @@ function computeNearestCustomItineraries(
 export async function fetchNearestCustomItinerary(
   origin: LatLng
 ): Promise<CustomRouteResult[]> {
-  try {
-    // Attempt to fetch fresh custom routes from Supabase (omitting heavy geography columns)
-    const [segRes, ptRes] = await Promise.all([
-      supabase
-        .from("custom_route_segments")
-        .select(
-          "segment_id, itinerary_id, itinerary_name, destination_id, segment_sequence, segment_type, route_id, direction_id, from_point_id, to_point_id, segment_name, coordinates, fare"
-        ),
-      supabase
-        .from("custom_route_points")
-        .select(
-          "point_id, point_type, terminal_role, name, instruction, itinerary_id, itinerary_name, destination_id, point_sequence, latitude, longitude"
-        ),
-    ]);
-
-    if (!segRes.error && !ptRes.error && segRes.data?.length && ptRes.data?.length) {
-      return computeNearestCustomItineraries(
-        segRes.data as CustomRouteSegment[],
-        ptRes.data as CustomRoutePoint[],
-        origin
-      );
-    }
-
-    if (segRes.error || ptRes.error) {
-      console.warn(
-        "[TARA] Supabase custom routes query error, falling back to built-in DLSAU routes:",
-        segRes.error || ptRes.error
-      );
-    }
-  } catch (err) {
-    console.warn(
-      "[TARA] Supabase network drop on Android, falling back to built-in DLSAU routes:",
-      err
-    );
-  }
-
-  // Built-in fallback: guaranteed to always work on Android/VPS even during socket drops or offline!
+  // Rely directly on the custom DLSAU routes dataset — zero network latency, zero socket errors
   return computeNearestCustomItineraries(
     STATIC_CUSTOM_SEGMENTS as unknown as CustomRouteSegment[],
     STATIC_CUSTOM_POINTS as unknown as CustomRoutePoint[],
