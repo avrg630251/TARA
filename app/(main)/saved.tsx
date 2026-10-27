@@ -162,12 +162,17 @@ export default function SavedScreen() {
   function formatSavedDate(value: string) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "Trip record";
-    return date.toLocaleDateString(undefined, {
+    const datePart = date.toLocaleDateString(undefined, {
       weekday: "short",
       day: "numeric",
       month: "short",
       year: "numeric",
     });
+    const timePart = date.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    return `${datePart} · ${timePart}`;
   }
 
   return (

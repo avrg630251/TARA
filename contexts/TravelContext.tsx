@@ -38,7 +38,7 @@ type TravelContextValue = {
   toggleBookmark: (plan: DisplayRoutePlan, meta: TravelMeta) => Promise<void>;
   removeBookmark: (key: string) => Promise<void>;
   addRecentFromTrip: (plan: DisplayRoutePlan, meta: TravelMeta) => Promise<void>;
-  removeRecent: (key: string) => void;
+  removeRecent: (key: string) => Promise<void> | void;
 };
 
 const TravelContext = createContext<TravelContextValue | null>(null);
@@ -181,6 +181,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       });
       const item: RecentTrip = {
         key: `${makeBookmarkKey(plan.id, meta.originLabel, meta.destinationLabel)}|${startedAt}`,
+        planId: plan.id,
         originLabel: meta.originLabel || "Current Location",
         destinationLabel: meta.destinationLabel || "De La Salle Araneta University",
         etaText: plan.estimatedText,
@@ -193,7 +194,13 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         polyline: plan.polyline,
         startedAt,
       };
-      const next = mergeRecentTrips(recentTripsRef.current, item);
+
+      const baseList =
+        recentTripsRef.current.length > 0
+          ? recentTripsRef.current
+          : await loadRecentTrips(userId);
+
+      const next = mergeRecentTrips(baseList, item);
       recentTripsRef.current = next;
       setRecentTrips(next);
       await persistRecentTrips(next, userId);
@@ -202,13 +209,15 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   );
 
   const removeRecent = useCallback(
-    (key: string) => {
-      setRecentTrips((prev) => {
-        const next = prev.filter((x) => x.key !== key);
-        recentTripsRef.current = next;
-        void persistRecentTrips(next, userId);
-        return next;
-      });
+    async (key: string) => {
+      const baseList =
+        recentTripsRef.current.length > 0
+          ? recentTripsRef.current
+          : await loadRecentTrips(userId);
+      const next = baseList.filter((x) => x.key !== key);
+      recentTripsRef.current = next;
+      setRecentTrips(next);
+      await persistRecentTrips(next, userId);
     },
     [userId]
   );

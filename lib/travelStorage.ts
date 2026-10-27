@@ -12,7 +12,7 @@ export function getRecentTripsKey(userId?: string | null): string {
 }
 
 const MAX_BOOKMARKS = 50;
-const MAX_RECENT = 15;
+const MAX_RECENT = 20;
 
 export type SavedRouteBookmark = {
   key: string;
@@ -31,6 +31,7 @@ export type SavedRouteBookmark = {
 
 export type RecentTrip = {
   key: string;
+  planId?: string;
   originLabel: string;
   destinationLabel: string;
   etaText: string;
@@ -107,12 +108,57 @@ export async function persistBookmarks(
   await kvSet(key, JSON.stringify(list.slice(0, MAX_BOOKMARKS)));
 }
 
+/** Generates a signature identifying the specific route and stops to prevent repeating duplicate trips. */
+export function getTripSignature(t: RecentTrip): string {
+  const planId = t.planId || (t.key ? t.key.split("|")[0]?.trim().toLowerCase() : "");
+  const route = strip(t.routeName || "");
+  const board = strip(t.boardStop || "");
+  const off = strip(t.offStop || "");
+  const origin = strip(t.originLabel || "");
+  const dest = strip(t.destinationLabel || "");
+
+  const segmentSig = (t.segments || [])
+    .map((s) => s.segmentId || s.routeId || s.label)
+    .filter(Boolean)
+    .join(">");
+
+  if (segmentSig) {
+    return `seg:${segmentSig}|board:${board}|off:${off}`;
+  }
+
+  if (planId && planId !== "plan" && planId !== "undefined") {
+    return `plan:${planId}|board:${board}|off:${off}`;
+  }
+
+  if (route && (board || off)) {
+    return `route:${route}|board:${board}|off:${off}`;
+  }
+
+  if (route) {
+    return `route:${route}|origin:${origin}|dest:${dest}`;
+  }
+
+  return `origin:${origin}|dest:${dest}|board:${board}|off:${off}`;
+}
+
+export function dedupeRecentTrips(trips: RecentTrip[]): RecentTrip[] {
+  const seen = new Set<string>();
+  const out: RecentTrip[] = [];
+  for (const t of trips) {
+    const sig = getTripSignature(t);
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(t);
+  }
+  return out.slice(0, MAX_RECENT);
+}
+
 export async function loadRecentTrips(userId?: string | null): Promise<RecentTrip[]> {
   const key = getRecentTripsKey(userId);
   const raw = await kvGet(key);
   const list = parseJson<RecentTrip[]>(raw, []);
   if (!Array.isArray(list)) return [];
-  const normalized = list.slice(0, MAX_RECENT).map((t) => {
+  const normalized = list.map((t) => {
     const f = normalizeTravelFare({
       routeName: t.routeName,
       originLabel: t.originLabel,
@@ -130,15 +176,18 @@ export async function loadRecentTrips(userId?: string | null): Promise<RecentTri
       fareValue: f.fareValue,
     };
   });
-  const hasChanges = list.some(
-    (t, i) =>
-      normalized[i] &&
-      (t.fareText !== normalized[i].fareText || t.fareValue !== normalized[i].fareValue)
-  );
+  const deduped = dedupeRecentTrips(normalized);
+  const hasChanges =
+    deduped.length !== list.length ||
+    list.some(
+      (t, i) =>
+        deduped[i] &&
+        (t.fareText !== deduped[i].fareText || t.fareValue !== deduped[i].fareValue)
+    );
   if (hasChanges) {
-    void kvSet(key, JSON.stringify(normalized));
+    void kvSet(key, JSON.stringify(deduped));
   }
-  return normalized;
+  return deduped;
 }
 
 export async function persistRecentTrips(
@@ -146,16 +195,14 @@ export async function persistRecentTrips(
   userId?: string | null
 ): Promise<void> {
   const key = getRecentTripsKey(userId);
-  await kvSet(key, JSON.stringify(list.slice(0, MAX_RECENT)));
+  const deduped = dedupeRecentTrips(list);
+  await kvSet(key, JSON.stringify(deduped.slice(0, MAX_RECENT)));
 }
 
-/** Keep newest-first; dedupe same origin + destination labels. */
+/** Keep newest-first; dedupe repeating trips sharing the same route signature. */
 export function mergeRecentTrips(existing: RecentTrip[], next: RecentTrip): RecentTrip[] {
-  const pair = `${strip(next.originLabel)}::${strip(next.destinationLabel)}`;
-  const filtered = existing.filter((t) => {
-    const p = `${strip(t.originLabel)}::${strip(t.destinationLabel)}`;
-    return p !== pair;
-  });
+  const nextSig = getTripSignature(next);
+  const filtered = existing.filter((t) => getTripSignature(t) !== nextSig);
   return [next, ...filtered].slice(0, MAX_RECENT);
 }
 

@@ -77,6 +77,8 @@ const segmentRows = segments.map((feature) => {
     from_point_id: required(properties, "from_point_id"),
     to_point_id: required(properties, "to_point_id"),
     segment_name: properties.segment_name ?? properties.name ?? null,
+    segment_details: properties.segment_details ?? null,
+    what_to_say: properties.what_to_say ?? null,
     coordinates,
     route_geog: `SRID=4326;LINESTRING(${lineString})`,
     source: properties.source ?? null,

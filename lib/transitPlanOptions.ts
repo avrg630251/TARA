@@ -35,6 +35,8 @@ export type DisplayRouteSegment = {
   segmentType: "walk" | "jeepney" | "tricycle" | "bus";
   coordinates: LatLng[];
   label?: string | null;
+  details?: string | null;
+  whatToSay?: string | null;
   routeId?: string | null;
   fare?: number | null;
   durationMinutes?: number | null;

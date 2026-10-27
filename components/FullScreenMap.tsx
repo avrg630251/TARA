@@ -60,7 +60,7 @@ const DEFAULT_PADDING = {
 };
 
 const PRIMARY_LINE = "#0B3D2E";
-const ALT_LINE = "rgba(71, 85, 105, 0.75)";
+const ALT_LINE = "rgba(91, 115, 142, 0.90)";
 const GOOGLE_MAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ?? "";
 
 function pickBestBubbleCoordinate(
@@ -369,9 +369,9 @@ function generateAndroidMapHtml() {
         }
 
         drawLine(alt.coordinates, {
-          strokeColor: alt.selected ? "#0B3D2E" : "rgba(71, 85, 105, 0.75)",
-          strokeOpacity: alt.selected ? 1 : 0.85,
-          strokeWeight: alt.selected ? 7 : 5,
+          strokeColor: alt.selected ? "#0B3D2E" : "#5B738E",
+          strokeOpacity: alt.selected ? 1 : 0.9,
+          strokeWeight: alt.selected ? 7 : 5.5,
           zIndex: alt.selected ? 20 : 10
         }, { type: "alternative", id: alt.id });
 
@@ -676,6 +676,7 @@ export function FullScreenMap({
       loadingBackgroundColor="#e9ecef"
       rotateEnabled
       pitchEnabled={false}
+      userInterfaceStyle="light"
     >
       {multi
         ? routeAlternatives!.map((alt) => {
@@ -686,9 +687,10 @@ export function FullScreenMap({
                 key={alt.id}
                 coordinates={alt.coordinates}
                 strokeColor={alt.selected ? PRIMARY_LINE : ALT_LINE}
-                strokeWidth={alt.selected ? 7 : 5}
+                strokeWidth={alt.selected ? 7 : 5.5}
                 lineCap="round"
                 lineJoin="round"
+                zIndex={alt.selected ? 20 : 10}
                 tappable
                 onPress={() => onAlternativePress?.(alt.id)}
               />
@@ -701,6 +703,7 @@ export function FullScreenMap({
               strokeWidth={navigationMode ? 7 : 6}
               lineCap="round"
               lineJoin="round"
+              zIndex={20}
             />
           ) : null}
       {routeSegments?.length
@@ -724,6 +727,7 @@ export function FullScreenMap({
                 lineDashPattern={segment.segmentType === "walk" ? [8, 6] : undefined}
                 lineCap="round"
                 lineJoin="round"
+                zIndex={selectedSegmentId === segment.segmentId ? 40 : 30}
                 tappable
                 onPress={() => onSegmentPress?.(segment)}
               />

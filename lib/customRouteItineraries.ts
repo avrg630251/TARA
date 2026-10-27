@@ -30,6 +30,8 @@ export type CustomRouteSegment = {
   from_point_id: string;
   to_point_id: string;
   segment_name: string | null;
+  segment_details?: string | null;
+  what_to_say?: string | null;
   coordinates: [number, number][];
   fare: number | null;
 };

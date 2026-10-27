@@ -433,7 +433,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.661394
       ]
     ],
-    "fare": 13
+    "fare": 13,
+    "segment_details": "Balintawak Ibabaw or Blumentritt",
+    "what_to_say": "Camachile or Sakayan Monumento"
   },
   {
     "segment_id": "ITIN_ROUTE_QUIRINO_DLSAU_2",
@@ -509,7 +511,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.662279
       ]
     ],
-    "fare": null
+    "fare": null,
+    "segment_details": null,
+    "what_to_say": null
   },
   {
     "segment_id": "ITIN_ROUTE_QUIRINO_DLSAU_3",
@@ -617,7 +621,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.670566
       ]
     ],
-    "fare": 15
+    "fare": 15,
+    "segment_details": "Blue",
+    "what_to_say": "La Salle Araneta"
   },
   {
     "segment_id": "ITIN_ROUTE_BAGONGBARRIO_DLSAU_1",
@@ -841,7 +847,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.668984
       ]
     ],
-    "fare": 10
+    "fare": 10,
+    "segment_details": "Jollibee Bagong Barrio (Ikot)",
+    "what_to_say": "Gate 5"
   },
   {
     "segment_id": "ITIN_ROUTE_VGC_DLSAU_2",
@@ -937,7 +945,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.665569
       ]
     ],
-    "fare": 13
+    "fare": 13,
+    "segment_details": "Malinta or Malanday",
+    "what_to_say": "Victoneta"
   },
   {
     "segment_id": "ITIN_ROUTE_BAGONGBARRIO_DLSAU_2",
@@ -1057,7 +1067,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.670538
       ]
     ],
-    "fare": null
+    "fare": null,
+    "segment_details": null,
+    "what_to_say": null
   },
   {
     "segment_id": "ITIN_ROUTE_SMGC_DLSAU_1",
@@ -1161,7 +1173,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.665612
       ]
     ],
-    "fare": 13
+    "fare": 13,
+    "segment_details": "Malinta or Malanday",
+    "what_to_say": "Victoneta"
   },
   {
     "segment_id": "ITIN_ROUTE_SMGC_DLSAU_2",
@@ -1233,7 +1247,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.666018
       ]
     ],
-    "fare": 15
+    "fare": 15,
+    "segment_details": null,
+    "what_to_say": null
   },
   {
     "segment_id": "ITIN_ROUTE_MCU_DLSAU_1",
@@ -1465,7 +1481,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.668933
       ]
     ],
-    "fare": 15
+    "fare": 15,
+    "segment_details": "Red",
+    "what_to_say": "Gate 5"
   },
   {
     "segment_id": "ITIN_ROUTE_PPLPARK_DLSAU_1",
@@ -1681,7 +1699,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.665621
       ]
     ],
-    "fare": 13
+    "fare": 13,
+    "segment_details": "Monumento",
+    "what_to_say": "SMGC"
   },
   {
     "segment_id": "ITIN_ROUTE_VGC_DLSAU_1",
@@ -2229,7 +2249,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.654728
       ]
     ],
-    "fare": 35
+    "fare": 35,
+    "segment_details": "Monumento",
+    "what_to_say": "SMGC"
   },
   {
     "segment_id": "ITIN_ROUTE_VGC_DLSAU_3",
@@ -2269,7 +2291,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.666005
       ]
     ],
-    "fare": null
+    "fare": null,
+    "segment_details": null,
+    "what_to_say": null
   },
   {
     "segment_id": "ITIN_ROUTE_VGC_DLSAU_4",
@@ -2405,7 +2429,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.670525
       ]
     ],
-    "fare": 15
+    "fare": 15,
+    "segment_details": "Red",
+    "what_to_say": "La Salle Araneta"
   },
   {
     "segment_id": "ITIN_ROUTE_PPLPARK_DLSAU_2",
@@ -2453,7 +2479,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.666012
       ]
     ],
-    "fare": null
+    "fare": null,
+    "segment_details": null,
+    "what_to_say": null
   },
   {
     "segment_id": "ITIN_ROUTE_PPLPARK_DLSAU_3",
@@ -2605,7 +2633,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.670536
       ]
     ],
-    "fare": 15
+    "fare": 15,
+    "segment_details": "Red",
+    "what_to_say": "La Salle Araneta"
   },
   {
     "segment_id": "ITIN_ROUTE_MCU_DLSAU_2",
@@ -2717,7 +2747,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.67054
       ]
     ],
-    "fare": null
+    "fare": null,
+    "segment_details": null,
+    "what_to_say": null
   },
   {
     "segment_id": "ITIN_ROUTE_SMGC_DLSAU_3",
@@ -2893,7 +2925,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.670528
       ]
     ],
-    "fare": 15
+    "fare": 15,
+    "segment_details": "Red",
+    "what_to_say": "Gate 5"
   },
   {
     "segment_id": "ITIN_ROUTE_STAQ_DLSAU_1",
@@ -3049,7 +3083,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.685465
       ]
     ],
-    "fare": 15
+    "fare": 15,
+    "segment_details": "Red",
+    "what_to_say": "Apple Ville"
   },
   {
     "segment_id": "ITIN_ROUTE_STAQ_DLSAU_2",
@@ -3257,7 +3293,9 @@ export const STATIC_CUSTOM_SEGMENTS = [
         14.670546
       ]
     ],
-    "fare": 15
+    "fare": 15,
+    "segment_details": "Purple",
+    "what_to_say": "La Salle Araneta"
   }
 ] as const;
 

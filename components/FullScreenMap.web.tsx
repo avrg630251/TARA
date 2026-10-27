@@ -38,7 +38,7 @@ type FullScreenMapProps = {
 };
 
 const PRIMARY_LINE = "#0B3D2E";
-const ALT_LINE = "rgba(71, 85, 105, 0.75)";
+const ALT_LINE = "rgba(91, 115, 142, 0.90)";
 const NAV_ZOOM = 16;
 
 function toBounds(g: any, coords: LatLng[]) {
@@ -318,8 +318,8 @@ export function FullScreenMap({
             lng: c.longitude,
           })),
           strokeColor: alt.selected ? PRIMARY_LINE : ALT_LINE,
-          strokeOpacity: alt.selected ? 1 : 0.85,
-          strokeWeight: alt.selected ? 7 : 5,
+          strokeOpacity: alt.selected ? 1 : 0.9,
+          strokeWeight: alt.selected ? 7 : 5.5,
           zIndex: alt.selected ? 20 : 10,
         });
         polyline.addListener("click", () => onAlternativePress?.(alt.id));

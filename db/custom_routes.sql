@@ -37,6 +37,8 @@ create table if not exists public.custom_route_segments (
   from_point_id text not null references public.custom_route_points(point_id),
   to_point_id text not null references public.custom_route_points(point_id),
   segment_name text,
+  segment_details text,
+  what_to_say text,
   coordinates jsonb not null,
   route_geog geography(linestring, 4326) not null,
   source text,
@@ -57,6 +59,8 @@ create table if not exists public.custom_route_itineraries (
 -- Apply these additions when the tables already existed before the latest schema.
 alter table public.custom_route_segments
   add column if not exists segment_name text,
+  add column if not exists segment_details text,
+  add column if not exists what_to_say text,
   add column if not exists coordinates jsonb,
   add column if not exists route_geog geography(linestring, 4326),
   add column if not exists source text,

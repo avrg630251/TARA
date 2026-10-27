@@ -156,6 +156,134 @@ function fareForSegment(
   return Math.ceil(computeJeepneyFare(polylineDistanceMeters(segment.coordinates)));
 }
 
+const COMMUTER_TIPS = [
+  "Verify your route with the driver or transport personnel prior to boarding to confirm the vehicle will pass your destination.",
+  "Estimated fares are approximate and subject to prevailing traffic conditions and official tariff rates, typically within a 15% variance.",
+];
+
+function formatSegmentVehicleDetail(segment: {
+  segmentType: "walk" | "jeepney" | "tricycle" | "bus";
+  details?: string | null;
+  whatToSay?: string | null;
+}) {
+  const detail = segment.details?.trim();
+  const say = segment.whatToSay?.trim();
+  if (segment.segmentType === "walk") {
+    return {
+      badgeText: null,
+      instructionText: null,
+      sayToDriverText: null,
+      transferMessage: null,
+      transferSpeech: null,
+    };
+  }
+
+  const sayPrompt = say ? `Tell driver: ${say}` : null;
+
+  if (segment.segmentType === "tricycle") {
+    const lookFor = detail ? `Look for: ${detail} tricycle` : null;
+    let transferMsg = "Transfer point nearby. Prepare for your upcoming tricycle ride.";
+    if (detail && say) {
+      transferMsg = `Transfer point nearby. Look for a ${detail} tricycle and tell the driver: ${say}.`;
+    } else if (detail) {
+      transferMsg = `Transfer point nearby. Look for a ${detail} tricycle to continue your trip.`;
+    } else if (say) {
+      transferMsg = `Transfer point nearby. Board a tricycle and tell the driver: ${say}.`;
+    }
+
+    let transferSpch = "Transfer point nearby. Prepare to alight for your tricycle ride.";
+    if (detail && say) {
+      transferSpch = `Transfer point nearby. Prepare to alight. Look for a ${detail} tricycle and tell the driver: ${say}.`;
+    } else if (detail) {
+      transferSpch = `Transfer point nearby. Prepare to alight and look for a ${detail} tricycle.`;
+    } else if (say) {
+      transferSpch = `Transfer point nearby. Prepare to alight. Tell the driver: ${say}.`;
+    }
+
+    return {
+      badgeText: detail ? `${detail} Tricycle` : "Tricycle",
+      instructionText: lookFor,
+      sayToDriverText: sayPrompt,
+      transferMessage: transferMsg,
+      transferSpeech: transferSpch,
+    };
+  }
+
+  if (segment.segmentType === "bus") {
+    const lookFor = detail ? `Look for signboard: ${detail}` : null;
+    let transferMsg = "Transfer point nearby. Prepare for your upcoming bus ride.";
+    if (detail && say) {
+      transferMsg = `Transfer point nearby. Look for a bus with placard: ${detail}, and tell the conductor: ${say}.`;
+    } else if (detail) {
+      transferMsg = `Transfer point nearby. Look for a bus with placard: ${detail}.`;
+    } else if (say) {
+      transferMsg = `Transfer point nearby. Tell the conductor: ${say}.`;
+    }
+
+    let transferSpch = "Transfer point nearby. Prepare to alight for your bus.";
+    if (detail && say) {
+      transferSpch = `Transfer point nearby. Prepare to alight. Look for a bus with placard: ${detail}, and tell the conductor: ${say}.`;
+    } else if (detail) {
+      transferSpch = `Transfer point nearby. Prepare to alight and look for a bus with placard: ${detail}.`;
+    } else if (say) {
+      transferSpch = `Transfer point nearby. Prepare to alight and tell the conductor: ${say}.`;
+    }
+
+    return {
+      badgeText: detail ? `Placard: ${detail}` : "Bus",
+      instructionText: lookFor,
+      sayToDriverText: sayPrompt,
+      transferMessage: transferMsg,
+      transferSpeech: transferSpch,
+    };
+  }
+
+  // Jeepney
+  const lookFor = detail ? `Look for signboard: ${detail}` : null;
+  let transferMsg = "Transfer point nearby. Prepare for your upcoming jeepney ride.";
+  if (detail && say) {
+    transferMsg = `Transfer point nearby. Look for a jeepney with signboard: ${detail}, and tell the driver: ${say}.`;
+  } else if (detail) {
+    transferMsg = `Transfer point nearby. Look for a jeepney with signboard: ${detail}.`;
+  } else if (say) {
+    transferMsg = `Transfer point nearby. Tell the driver: ${say}.`;
+  }
+
+  let transferSpch = "Transfer point nearby. Prepare to alight for your jeepney.";
+  if (detail && say) {
+    transferSpch = `Transfer point nearby. Prepare to alight. Look for a jeepney with signboard: ${detail}, and tell the driver: ${say}.`;
+  } else if (detail) {
+    transferSpch = `Transfer point nearby. Prepare to alight and look for a jeepney with signboard: ${detail}.`;
+  } else if (say) {
+    transferSpch = `Transfer point nearby. Prepare to alight and tell the driver: ${say}.`;
+  }
+
+  return {
+    badgeText: detail ? `Signboard: ${detail}` : "Jeepney",
+    instructionText: lookFor,
+    sayToDriverText: sayPrompt,
+    transferMessage: transferMsg,
+    transferSpeech: transferSpch,
+  };
+}
+
+function CommuterTipsCard() {
+  return (
+    <View style={styles.commuterTipsCard}>
+      <View style={styles.commuterTipsHeader}>
+        <Ionicons name="information-circle-outline" size={17} color="#B45309" />
+        <Text style={styles.commuterTipsTitle}>Commuter Advisories</Text>
+      </View>
+      {COMMUTER_TIPS.map((tip, idx) => (
+        <View key={idx} style={styles.commuterTipItem}>
+          <Text style={styles.commuterTipBullet}>•</Text>
+          <Text style={styles.commuterTipText}>{tip}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function routeSegmentsForLocation(
   segments: DisplayRouteSegment[],
   location: LatLng,
@@ -1030,18 +1158,22 @@ export default function SearchMapScreen() {
       }
       const title =
         nearby.segmentType === "walk" ? "Approaching Stop" : "Transfer Point Nearby";
+      const vehicleDetail = formatSegmentVehicleDetail(nearby);
       const message =
-        nearby.label ?? `Prepare for your upcoming ${nearby.segmentType} segment.`;
+        vehicleDetail.transferMessage ??
+        nearby.label ??
+        `Prepare for your upcoming ${nearby.segmentType} segment.`;
       setTripAlertBanner({
         type: "transfer",
         title,
         message,
       });
-      speakTripNotification(
-        nearby.segmentType === "walk"
+      const speech =
+        vehicleDetail.transferSpeech ??
+        (nearby.segmentType === "walk"
           ? "Approaching stop. Prepare to alight."
-          : `Transfer point nearby. Prepare for your upcoming ${nearby.segmentType} segment.`
-      );
+          : `Transfer point nearby. Prepare for your upcoming ${nearby.segmentType} segment.`);
+      speakTripNotification(speech);
       Alert.alert(title, message);
     }
   }, [tripActivePlan, destinationCoord, navLatitude, navLongitude]);
@@ -1119,6 +1251,39 @@ export default function SearchMapScreen() {
       });
       setTripDetailsExpanded(false);
       snapSheet(false);
+
+      const firstTransitSegment = plan.segments?.find(
+        (segment) => segment.segmentType !== "walk"
+      );
+      if (firstTransitSegment) {
+        const look = firstTransitSegment.details?.trim();
+        const say = firstTransitSegment.whatToSay?.trim();
+        if (firstTransitSegment.segmentType === "tricycle") {
+          let msg = `Trip started towards ${destination.trim() || "De La Salle Araneta University"}.`;
+          if (look && say) {
+            msg = `Trip started. Proceed to your boarding point, look for a ${look} tricycle, and tell the driver: ${say}.`;
+          } else if (look) {
+            msg = `Trip started. Proceed to your boarding point and look for a ${look} tricycle.`;
+          } else if (say) {
+            msg = `Trip started. Board a tricycle and tell the driver: ${say}.`;
+          }
+          speakTripNotification(msg);
+        } else {
+          let msg = `Trip started towards ${destination.trim() || "De La Salle Araneta University"}.`;
+          if (look && say) {
+            msg = `Trip started. Proceed to your boarding point, look for the ${firstTransitSegment.segmentType} with signboard: ${look}, and tell the driver: ${say}.`;
+          } else if (look) {
+            msg = `Trip started. Proceed to your boarding point and look for the ${firstTransitSegment.segmentType} with signboard: ${look}.`;
+          } else if (say) {
+            msg = `Trip started. Board the ${firstTransitSegment.segmentType} and tell the driver: ${say}.`;
+          }
+          speakTripNotification(msg);
+        }
+      } else {
+        speakTripNotification(
+          `Trip started towards ${destination.trim() || "De La Salle Araneta University"}.`
+        );
+      }
     },
     [latitude, longitude, snapSheet, destination, originLabel, addRecentFromTrip]
   );
@@ -1370,6 +1535,8 @@ export default function SearchMapScreen() {
               segmentId: segment.segment_id,
               segmentType: segment.segment_type,
               label: segment.segment_name,
+              details: segment.segment_details ? segment.segment_details.trim() : null,
+              whatToSay: segment.what_to_say ? segment.what_to_say.trim() : null,
               routeId: segment.route_id,
               fare:
                 segmentDetails[index]?.fare != null
@@ -1430,6 +1597,184 @@ export default function SearchMapScreen() {
     }
   }
 
+  const renderSegmentDetailsCard = () => {
+    if (!selectedSegment) return null;
+
+    const isWalk = selectedSegment.segmentType === "walk";
+    const isJeepney = selectedSegment.segmentType === "jeepney";
+    const isTricycle = selectedSegment.segmentType === "tricycle";
+    const isBus = selectedSegment.segmentType === "bus";
+
+    let modeTitle = "Walking";
+    let modeBadge = "Walk";
+    let iconName: keyof typeof Ionicons.glyphMap = "walk-outline";
+    let badgeBg = "#F1F5F9";
+    let badgeBorder = "#E2E8F0";
+    let badgeColor = "#475569";
+
+    if (isJeepney) {
+      modeTitle = "Jeepney";
+      modeBadge = "Jeepney";
+      iconName = "bus-outline";
+      badgeBg = "#E0F2FE";
+      badgeBorder = "#BAE6FD";
+      badgeColor = "#0284C7";
+    } else if (isTricycle) {
+      modeTitle = "Tricycle";
+      modeBadge = "Tricycle";
+      iconName = "bicycle-outline";
+      badgeBg = "#FEF3C7";
+      badgeBorder = "#FDE68A";
+      badgeColor = "#D97706";
+    } else if (isBus) {
+      modeTitle = "Bus";
+      modeBadge = "Bus";
+      iconName = "bus-outline";
+      badgeBg = "#F3E8FF";
+      badgeBorder = "#E9D5FF";
+      badgeColor = "#7E22CE";
+    }
+
+    // Capitalized label or title
+    const rawLabel = selectedSegment.label?.trim();
+    const displayTitle = rawLabel
+      ? rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1)
+      : `${modeTitle} Segment`;
+
+    // Distance calculation
+    const distMeters = polylineDistanceMeters(selectedSegment.coordinates);
+    const distanceText = distMeters > 0 ? formatDistance(distMeters) : null;
+
+    // Fare calculation
+    let fareText = "Free";
+    if (isTricycle) {
+      const shared = Math.ceil(
+        discountCode === "discounted"
+          ? TRICYCLE_SHARED_FARE_PHP * 0.8
+          : TRICYCLE_SHARED_FARE_PHP
+      );
+      const solo = TRICYCLE_SOLO_FARE_PHP;
+      fareText = `₱${shared} shared · ₱${solo} solo`;
+    } else if (isBus) {
+      const busFare = Math.ceil(
+        discountCode === "discounted"
+          ? BUS_BASE_FARE_PHP * 0.8
+          : BUS_BASE_FARE_PHP
+      );
+      fareText = `₱${busFare}`;
+    } else if (isJeepney) {
+      const rawFare = selectedSegment.fare ?? computeJeepneyFare(distMeters);
+      const finalFare = Math.ceil(
+        discountCode === "discounted" ? rawFare * 0.8 : rawFare
+      );
+      fareText = `₱${finalFare}${discountCode === "discounted" ? " (Discounted)" : ""}`;
+    } else if (!isWalk) {
+      fareText =
+        selectedSegment.fare != null
+          ? `₱${Math.ceil(
+              discountCode === "discounted"
+                ? selectedSegment.fare * 0.8
+                : selectedSegment.fare
+            )}`
+          : "Standard fare";
+    }
+
+    // Duration calculation
+    let durationText: string | null = null;
+    if (
+      selectedSegment.durationMinutes != null &&
+      selectedSegment.durationMinutes > 0
+    ) {
+      durationText = `${Math.ceil(selectedSegment.durationMinutes)} min`;
+    } else if (selectedSegment.coordinates.length >= 2) {
+      const speed = isWalk ? 75 : 250;
+      const estMin = Math.max(1, Math.round(distMeters / speed));
+      durationText = `${estMin} min`;
+    }
+
+    return (
+      <View style={styles.segmentCard} pointerEvents="auto">
+        <View style={styles.segmentCardHeader}>
+          <View
+            style={[
+              styles.segmentBadge,
+              { backgroundColor: badgeBg, borderColor: badgeBorder },
+            ]}
+          >
+            <Ionicons name={iconName} size={13} color={badgeColor} />
+            <Text style={[styles.segmentBadgeText, { color: badgeColor }]}>
+              {modeBadge}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setSelectedSegment(null)}
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.segmentCloseBtn,
+              pressed && styles.pressed,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Close segment details"
+          >
+            <Ionicons name="close" size={16} color="#64748B" />
+          </Pressable>
+        </View>
+
+        <Text style={styles.segmentTitle} numberOfLines={2}>
+          {displayTitle}
+        </Text>
+
+        {(() => {
+          const vehicleDetail = formatSegmentVehicleDetail(selectedSegment);
+          if (!vehicleDetail.instructionText && !vehicleDetail.sayToDriverText) return null;
+          return (
+            <View style={{ gap: 4, marginTop: 6 }}>
+              {vehicleDetail.instructionText ? (
+                <View style={styles.segmentDetailCallout}>
+                  <Text style={styles.segmentDetailCalloutText}>
+                    {vehicleDetail.instructionText}
+                  </Text>
+                </View>
+              ) : null}
+              {vehicleDetail.sayToDriverText ? (
+                <View style={styles.segmentSayCallout}>
+                  <Text style={styles.segmentSayCalloutText}>
+                    {vehicleDetail.sayToDriverText}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          );
+        })()}
+
+        <View style={styles.segmentChipsRow}>
+          <View style={[styles.segmentChip, styles.segmentChipFare]}>
+            <Ionicons
+              name={isWalk ? "walk-outline" : "cash-outline"}
+              size={13}
+              color={GREEN}
+            />
+            <Text style={styles.segmentChipFareText}>{fareText}</Text>
+          </View>
+
+          {durationText ? (
+            <View style={styles.segmentChip}>
+              <Ionicons name="time-outline" size={13} color="#475569" />
+              <Text style={styles.segmentChipText}>{durationText}</Text>
+            </View>
+          ) : null}
+
+          {distanceText ? (
+            <View style={styles.segmentChip}>
+              <Ionicons name="navigate-outline" size={13} color="#475569" />
+              <Text style={styles.segmentChipText}>{distanceText}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={styles.root}>
       {Platform.OS === "android" ? (
@@ -1474,44 +1819,13 @@ export default function SearchMapScreen() {
         fitEdgePadding={fitEdgePadding}
         fitSignal={tripActivePlan ? 0 : fitMapSignal}
         selectedSegmentId={selectedSegment?.segmentId}
-        onSegmentPress={setSelectedSegment}
+        onSegmentPress={(seg) =>
+          setSelectedSegment((prev) =>
+            prev?.segmentId === seg.segmentId ? null : seg
+          )
+        }
         onAlternativePress={selectRoute}
       />
-
-      {selectedSegment ? (
-        <View style={styles.segmentPopup}>
-          <Text style={styles.segmentPopupTitle}>
-            {selectedSegment.segmentType === "walk"
-              ? "Walking"
-              : `${selectedSegment.segmentType[0].toUpperCase()}${selectedSegment.segmentType.slice(1)} route`}
-          </Text>
-          <Text style={styles.segmentPopupLine}>
-            Type: {selectedSegment.segmentType}
-          </Text>
-          <Text style={styles.segmentPopupLine}>
-            Fare:{" "}
-            {selectedSegment.fare == null
-              ? selectedSegment.segmentType === "walk"
-                ? "Free"
-                : "Fare unavailable"
-              : formatCurrency(
-                  discountCode === "discounted"
-                    ? Math.ceil(selectedSegment.fare * 0.8)
-                    : Math.ceil(selectedSegment.fare),
-                  "PHP"
-                )}
-          </Text>
-          <Text style={styles.segmentPopupLine}>
-            Time:{" "}
-            {selectedSegment.durationMinutes != null
-              ? `${selectedSegment.durationMinutes} min`
-              : "Calculating..."}
-          </Text>
-          <Pressable onPress={() => setSelectedSegment(null)}>
-            <Text style={styles.segmentPopupClose}>Close</Text>
-          </Pressable>
-        </View>
-      ) : null}
 
       {tripActivePlan ? (
         <View style={styles.tripExperience} pointerEvents="box-none">
@@ -1532,8 +1846,10 @@ export default function SearchMapScreen() {
             <View style={styles.tripTopSpacer} />
           </SafeAreaView>
 
-          <View style={styles.tripContent}>
-            {tripAlertBanner ? (
+          {renderSegmentDetailsCard()}
+
+          {tripAlertBanner ? (
+            <View style={styles.tripAlertBannerWrapper} pointerEvents="box-none">
               <View
                 style={[
                   styles.tripAlertBanner,
@@ -1580,225 +1896,256 @@ export default function SearchMapScreen() {
                   <Ionicons name="close" size={20} color="#fff" />
                 </Pressable>
               </View>
-            ) : null}
-
-            <View style={styles.tripLocationCard}>
-              <View style={styles.tripLocationRow}>
-                <View style={styles.originDot}><View style={styles.originDotInner} /></View>
-                <Text style={styles.tripLocationText} numberOfLines={1}>{originLabel}</Text>
-              </View>
-              <View style={styles.tripConnector} />
-              <View style={styles.tripLocationRow}>
-                <Ionicons name="location-outline" size={22} color={GREEN} />
-                <Text style={styles.tripLocationText} numberOfLines={1}>
-                  {tripActivePlan.offStop || destination}
-                </Text>
-              </View>
             </View>
+          ) : null}
 
-            <Pressable
-              style={styles.tripCompactHeader}
-              onPress={() => setTripDetailsExpanded((expanded) => !expanded)}
-              accessibilityRole="button"
-              accessibilityLabel={tripDetailsExpanded ? "Collapse trip details" : "Expand trip details"}
-            >
-              <View style={styles.tripCompactHeaderText}>
-                <Text style={styles.tripCompactTitle} numberOfLines={1}>
+          {!tripDetailsExpanded ? (
+            <View style={styles.tripCollapsedContainer} pointerEvents="box-none">
+              <View style={styles.tripCollapsedCard}>
+                <View style={styles.tripCollapsedTopRow}>
+                  <View style={styles.tripCollapsedBadge}>
+                    <Ionicons name="navigate" size={11} color="#059669" />
+                    <Text style={styles.tripCollapsedBadgeText}>ACTIVE TRIP</Text>
+                  </View>
+                  <Text style={styles.tripCollapsedMeta}>
+                    {tripActivePlan.estimatedText} · {formatDistance(polylineDistanceMeters(tripActivePlan.polyline))}
+                  </Text>
+                </View>
+
+                <Text style={styles.tripCollapsedTitle} numberOfLines={1}>
                   {tripActivePlan.routeName}
                 </Text>
-                <Text style={styles.tripCompactMeta}>
-                  {tripActivePlan.estimatedText} · {formatDistance(polylineDistanceMeters(tripActivePlan.polyline))}
-                </Text>
-              </View>
-              <Ionicons
-                name={tripDetailsExpanded ? "chevron-down" : "chevron-up"}
-                size={22}
-                color={GREEN}
-              />
-            </Pressable>
 
-            {tripDetailsExpanded ? <View style={styles.tripExpandedPanel}>
-              <View style={styles.tripDetailsCard}>
-              <Text style={styles.tripSectionTitle}>Trip Details</Text>
-              <View style={styles.tripStatsRow}>
-                <View style={styles.tripStat}>
-                  <Ionicons name="time-outline" size={18} color={GREEN} />
-                  <Text style={styles.tripStatLabel}>Duration</Text>
-                  <Text style={styles.tripStatValue}>{tripActivePlan.estimatedText}</Text>
-                  </View>
-                <View style={styles.tripStat}>
-                  <Ionicons name="navigate-outline" size={18} color={GREEN} />
-                  <Text style={styles.tripStatLabel}>Distance</Text>
-                  <Text style={styles.tripStatValue}>
-                    {formatDistance(polylineDistanceMeters(tripActivePlan.polyline))}
+                <View style={styles.tripCollapsedLocationRow}>
+                  <View style={styles.originDotSmall}><View style={styles.originDotInnerSmall} /></View>
+                  <Text style={styles.tripCollapsedLocationText} numberOfLines={1}>{originLabel}</Text>
+                  <Ionicons name="arrow-forward" size={13} color="#94A3B8" />
+                  <Ionicons name="location-sharp" size={13} color={GREEN} />
+                  <Text style={styles.tripCollapsedLocationText} numberOfLines={1}>
+                    {tripActivePlan.offStop || destination}
                   </Text>
                 </View>
-                <View style={styles.tripStat}>
-                  <Ionicons name="bus-outline" size={18} color={GREEN} />
-                  <Text style={styles.tripStatLabel}>Route</Text>
-                  <Text style={styles.tripStatValue} numberOfLines={1}>
-                    {tripActivePlan.routeName}
-                  </Text>
-                </View>
+
+                <Pressable
+                  style={({ pressed }) => [styles.tripPullUpBtn, pressed && styles.pressed]}
+                  onPress={() => setTripDetailsExpanded(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Pull up trip details"
+                >
+                  <Text style={styles.tripPullUpBtnText}>View directions & details</Text>
+                  <Ionicons name="chevron-up" size={18} color={GREEN} />
+                </Pressable>
               </View>
-              <View style={styles.tripFareHeader}>
-                <Text style={styles.tripFareTitle}>Estimated Fare Breakdown</Text>
-                <Text style={styles.tripFareBadge}>
-                  {discountCode === "discounted" ? "Discounted (20% off)" : "Regular Fare"}
-                </Text>
-              </View>
+            </View>
+          ) : null}
 
-              {(() => {
-                const transitSegments = (tripActivePlan.segments ?? []).filter(
-                  (segment) => segment.segmentType !== "walk"
-                );
-                if (transitSegments.length > 0) {
-                  return transitSegments.map((segment) => {
-                    const isTricycle = segment.segmentType === "tricycle";
-                    const isBus = segment.segmentType === "bus";
-                    const distMeters = polylineDistanceMeters(segment.coordinates);
-
-                    const legLabel =
-                      segment.label ?? segment.routeId ?? `${segment.segmentType} ride`;
-                    let legValue = "";
-                    let legNote = "";
-
-                    if (isTricycle) {
-                      const shared = Math.ceil(
-                        discountCode === "discounted"
-                          ? TRICYCLE_SHARED_FARE_PHP * 0.8
-                          : TRICYCLE_SHARED_FARE_PHP
-                      );
-                      const solo = TRICYCLE_SOLO_FARE_PHP;
-                      legValue = `₱${shared} shared · ₱${solo} solo`;
-                      legNote =
-                        "₱15 for shared with other passengers, and ₱50 for solo/special (excluded from discount)";
-                    } else if (isBus) {
-                      const busFare = Math.ceil(
-                        discountCode === "discounted"
-                          ? BUS_BASE_FARE_PHP * 0.8
-                          : BUS_BASE_FARE_PHP
-                      );
-                      legValue = `₱${busFare}`;
-                      legNote = "35 Base fare";
-                    } else {
-                      const jFare = computeJeepneyFare(distMeters);
-                      const finalJFare = Math.ceil(
-                        discountCode === "discounted" ? jFare * 0.8 : jFare
-                      );
-                      legValue = `₱${finalJFare}`;
-                      legNote =
-                        "14 base fare for 4 kilometers (+₱2 per succeeding km at/after 5 km)";
-                    }
-
-                    return (
-                      <View
-                        key={`fare-${segment.segmentId}`}
-                        style={styles.tripFareLegContainer}
-                      >
-                        <View style={styles.tripFareRow}>
-                          <Text style={styles.tripFareLabel} numberOfLines={1}>
-                            {legLabel}
-                          </Text>
-                          <Text style={styles.tripFareValue}>{legValue}</Text>
-                        </View>
-                        <Text style={styles.tripFareNote}>{legNote}</Text>
-                      </View>
-                    );
-                  });
-                }
-
-                const isTricycle = /tricycle|trike/i.test(tripActivePlan.routeName);
-                const isBus =
-                  tripActivePlan.vehicleType === "bus" ||
-                  /bus/i.test(tripActivePlan.routeName);
-                const distMeters = polylineDistanceMeters(tripActivePlan.polyline);
-
-                let legValue = "";
-                let legNote = "";
-                if (isTricycle) {
-                  const shared = Math.ceil(
-                    discountCode === "discounted"
-                      ? TRICYCLE_SHARED_FARE_PHP * 0.8
-                      : TRICYCLE_SHARED_FARE_PHP
-                  );
-                  const solo = TRICYCLE_SOLO_FARE_PHP;
-                  legValue = `₱${shared} shared · ₱${solo} solo`;
-                  legNote =
-                    "₱15 for shared with other passengers, and ₱50 for solo/special (excluded from discount)";
-                } else if (isBus) {
-                  const busFare = Math.ceil(
-                    discountCode === "discounted"
-                      ? BUS_BASE_FARE_PHP * 0.8
-                      : BUS_BASE_FARE_PHP
-                  );
-                  legValue = `₱${busFare}`;
-                  legNote = "35 Base fare";
-                } else {
-                  const jFare = computeJeepneyFare(distMeters);
-                  const finalJFare = Math.ceil(
-                    discountCode === "discounted" ? jFare * 0.8 : jFare
-                  );
-                  legValue = `₱${finalJFare}`;
-                  legNote =
-                    "14 base fare for 4 kilometers (+₱2 per succeeding km at/after 5 km)";
-                }
-
-                return (
-                  <View style={styles.tripFareLegContainer}>
-                    <View style={styles.tripFareRow}>
-                      <Text style={styles.tripFareLabel} numberOfLines={1}>
+          {tripDetailsExpanded ? (
+            <View style={styles.tripExpandedModalOverlay} pointerEvents="box-none">
+              <View style={styles.tripExpandedSheet}>
+                <View style={styles.tripSheetHeader}>
+                  <View style={styles.tripSheetDragBar} />
+                  <View style={styles.tripSheetHeaderRow}>
+                    <View style={styles.tripSheetHeaderText}>
+                      <Text style={styles.tripSheetTitle} numberOfLines={1}>
                         {tripActivePlan.routeName}
                       </Text>
-                      <Text style={styles.tripFareValue}>{legValue}</Text>
+                      <Text style={styles.tripSheetSubtitle}>
+                        {tripActivePlan.estimatedText} · {formatDistance(polylineDistanceMeters(tripActivePlan.polyline))}
+                      </Text>
                     </View>
-                    <Text style={styles.tripFareNote}>{legNote}</Text>
+                    <Pressable
+                      onPress={() => setTripDetailsExpanded(false)}
+                      style={({ pressed }) => [
+                        styles.tripSheetCloseBtn,
+                        pressed && styles.pressed,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Pull down trip details"
+                      hitSlop={12}
+                    >
+                      <Ionicons name="chevron-down" size={22} color="#1E293B" />
+                    </Pressable>
                   </View>
-                );
-              })()}
+                </View>
 
-              <View style={styles.tripFareTotalRow}>
-                <Text style={styles.tripFareTotalLabel}>Total estimated fare</Text>
-                <Text style={styles.tripFareTotalValue}>{tripActivePlan.fareText}</Text>
+                <ScrollView
+                  style={styles.tripSheetScroll}
+                  contentContainerStyle={styles.tripSheetScrollContent}
+                  showsVerticalScrollIndicator={true}
+                >
+                  <View style={styles.tripSheetLocationCard}>
+                    <View style={styles.tripLocationRow}>
+                      <View style={styles.originDot}><View style={styles.originDotInner} /></View>
+                      <Text style={styles.tripLocationText} numberOfLines={1}>{originLabel}</Text>
+                    </View>
+                    <View style={styles.tripConnector} />
+                    <View style={styles.tripLocationRow}>
+                      <Ionicons name="location-outline" size={22} color={GREEN} />
+                      <Text style={styles.tripLocationText} numberOfLines={1}>
+                        {tripActivePlan.offStop || destination}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.tripStatsRow}>
+                    <View style={styles.tripStat}>
+                      <Ionicons name="time-outline" size={18} color={GREEN} />
+                      <Text style={styles.tripStatLabel}>Duration</Text>
+                      <Text style={styles.tripStatValue}>{tripActivePlan.estimatedText}</Text>
+                    </View>
+                    <View style={styles.tripStat}>
+                      <Ionicons name="navigate-outline" size={18} color={GREEN} />
+                      <Text style={styles.tripStatLabel}>Distance</Text>
+                      <Text style={styles.tripStatValue}>
+                        {formatDistance(polylineDistanceMeters(tripActivePlan.polyline))}
+                      </Text>
+                    </View>
+                    <View style={styles.tripStat}>
+                      <Ionicons name="cash-outline" size={18} color={GREEN} />
+                      <Text style={styles.tripStatLabel}>Est. Fare</Text>
+                      <Text style={styles.tripStatValue} numberOfLines={1}>
+                        {tripActivePlan.fareText}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.tripSectionHeader}>
+                    <Ionicons name="trail-sign-outline" size={17} color={GREEN} />
+                    <Text style={styles.tripSectionTitle}>Step-by-Step Directions</Text>
+                  </View>
+
+                  {tripActivePlan.segments?.map((segment, index) => {
+                    const vehicleDetail = formatSegmentVehicleDetail(segment);
+                    return (
+                      <View key={segment.segmentId} style={styles.tripStepRow}>
+                        <View style={styles.tripStepNumber}>
+                          <Text style={styles.tripStepNumberText}>{index + 1}</Text>
+                        </View>
+                        <View style={styles.tripStepContent}>
+                          <Text style={styles.tripStepText}>
+                            {segment.segmentType === "walk"
+                              ? segment.label ?? "Walk"
+                              : segment.label ?? segment.routeId ?? `${segment.segmentType} ride`}
+                          </Text>
+                          {vehicleDetail.instructionText ? (
+                            <View style={styles.tripStepVehiclePill}>
+                              <Text style={styles.tripStepVehicleText}>
+                                {vehicleDetail.instructionText}
+                              </Text>
+                            </View>
+                          ) : null}
+                          {vehicleDetail.sayToDriverText ? (
+                            <View style={styles.tripStepSayPill}>
+                              <Text style={styles.tripStepSayText}>
+                                {vehicleDetail.sayToDriverText}
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {distanceToDestinationMeters != null ? (
+                    <Text style={styles.tripLiveDistance}>
+                      {distanceToDestinationMeters < 120
+                        ? "You are near your destination."
+                        : `${formatDistance(distanceToDestinationMeters)} remaining`}
+                    </Text>
+                  ) : null}
+
+                  <View style={styles.tripSectionHeader}>
+                    <Ionicons name="receipt-outline" size={17} color={GREEN} />
+                    <Text style={styles.tripSectionTitle}>Fare Breakdown</Text>
+                  </View>
+
+                  {(() => {
+                    const transitSegments = (tripActivePlan.segments ?? []).filter(
+                      (segment) => segment.segmentType !== "walk"
+                    );
+                    if (transitSegments.length > 0) {
+                      return transitSegments.map((segment) => {
+                        const isTricycle = segment.segmentType === "tricycle";
+                        const isBus = segment.segmentType === "bus";
+                        const distMeters = polylineDistanceMeters(segment.coordinates);
+
+                        const legLabel =
+                          segment.label ?? segment.routeId ?? `${segment.segmentType} ride`;
+                        let legValue = "";
+                        let legNote = "";
+
+                        if (isTricycle) {
+                          const shared = Math.ceil(
+                            discountCode === "discounted"
+                              ? TRICYCLE_SHARED_FARE_PHP * 0.8
+                              : TRICYCLE_SHARED_FARE_PHP
+                          );
+                          const solo = TRICYCLE_SOLO_FARE_PHP;
+                          legValue = `₱${shared} shared · ₱${solo} solo`;
+                          legNote =
+                            "₱15 shared, ₱50 solo/special";
+                        } else if (isBus) {
+                          const busFare = Math.ceil(
+                            discountCode === "discounted"
+                              ? BUS_BASE_FARE_PHP * 0.8
+                              : BUS_BASE_FARE_PHP
+                          );
+                          legValue = `₱${busFare}`;
+                          legNote = "₱35 base fare";
+                        } else {
+                          const jFare = computeJeepneyFare(distMeters);
+                          const finalJFare = Math.ceil(
+                            discountCode === "discounted" ? jFare * 0.8 : jFare
+                          );
+                          legValue = `₱${finalJFare}`;
+                          legNote =
+                            "₱14 base fare for 4 km (+₱2/km thereafter)";
+                        }
+
+                        return (
+                          <View
+                            key={`fare-${segment.segmentId}`}
+                            style={styles.tripFareLegContainer}
+                          >
+                            <View style={styles.tripFareRow}>
+                              <Text style={styles.tripFareLabel} numberOfLines={1}>
+                                {legLabel}
+                              </Text>
+                              <Text style={styles.tripFareValue}>{legValue}</Text>
+                            </View>
+                            <Text style={styles.tripFareNote}>{legNote}</Text>
+                          </View>
+                        );
+                      });
+                    }
+                    return null;
+                  })()}
+
+                  <View style={styles.tripFareTotalRow}>
+                    <Text style={styles.tripFareTotalLabel}>Total estimated fare</Text>
+                    <Text style={styles.tripFareTotalValue}>{tripActivePlan.fareText}</Text>
+                  </View>
+
+                  <CommuterTipsCard />
+
+                  <Pressable
+                    style={({ pressed }) => [styles.tripEndBtn, pressed && styles.pressed]}
+                    onPress={endTrip}
+                    accessibilityRole="button"
+                    accessibilityLabel="End trip"
+                  >
+                    <Text style={styles.tripEndBtnText}>End Trip</Text>
+                  </Pressable>
+                </ScrollView>
               </View>
             </View>
-
-            <View style={styles.tripStepsCard}>
-              <Text style={styles.tripSectionTitle}>Step-by-Step Instructions</Text>
-              {tripActivePlan.segments?.map((segment, index) => (
-                <View key={segment.segmentId} style={styles.tripStepRow}>
-                  <View style={styles.tripStepNumber}><Text style={styles.tripStepNumberText}>{index + 1}</Text></View>
-                  <Text style={styles.tripStepText} numberOfLines={2}>
-                    {segment.segmentType === "walk"
-                      ? segment.label ?? "Walk"
-                      : segment.label ?? segment.routeId ?? `${segment.segmentType} ride`}
-                  </Text>
-                </View>
-              ))}
-              {distanceToDestinationMeters != null ? (
-                <Text style={styles.tripLiveDistance}>
-                  {distanceToDestinationMeters < 120
-                    ? "You are near your destination."
-                    : `${formatDistance(distanceToDestinationMeters)} remaining`}
-                </Text>
-              ) : null}
-              <Pressable
-              style={({ pressed }) => [styles.tripEndBtn, pressed && styles.pressed]}
-              onPress={endTrip}
-              accessibilityRole="button"
-              accessibilityLabel="End trip"
-            >
-              <Text style={styles.tripEndBtnText}>End trip</Text>
-              </Pressable>
-            </View>
-            </View> : null}
-          </View>
+          ) : null}
         </View>
       ) : null}
 
       {!tripActivePlan ? (
-      <SafeAreaView style={styles.topSafe} edges={["top"]}>
-        <View style={styles.whereCard}>
+      <SafeAreaView style={styles.topSafe} edges={["top"]} pointerEvents="box-none">
+        <View style={styles.whereCard} pointerEvents="auto">
           <View style={styles.whereHeader}>
             <Pressable
               onPress={() => router.navigate("/(main)")}
@@ -1918,6 +2265,7 @@ export default function SearchMapScreen() {
             <Text style={styles.routeErrorText}>{routeError}</Text>
           ) : null}
         </View>
+        {renderSegmentDetailsCard()}
       </SafeAreaView>
       ) : null}
 
@@ -2178,9 +2526,10 @@ export default function SearchMapScreen() {
             if (!rideDetailSegments.length) return null;
 
             return (
-              <View style={styles.rideDetailsCard}>
-                <Text style={styles.rideDetailsTitle}>Ride details</Text>
-                {rideDetailSegments.map((segment, index) => {
+              <>
+                <View style={styles.rideDetailsCard}>
+                  <Text style={styles.rideDetailsTitle}>Ride details</Text>
+                  {rideDetailSegments.map((segment, index) => {
                   let modeText = "Walk";
                   if (segment.segmentType === "jeepney") {
                     modeText = "Jeepney";
@@ -2238,11 +2587,35 @@ export default function SearchMapScreen() {
                           {segment.label ?? segment.routeId ?? `${modeText} ride`}
                         </Text>
                         <Text style={styles.rideDetailMeta}>{description}</Text>
+                        {(() => {
+                          const vehicleDetail = formatSegmentVehicleDetail(segment);
+                          if (!vehicleDetail.instructionText && !vehicleDetail.sayToDriverText) return null;
+                          return (
+                            <View style={{ gap: 4, marginTop: 4 }}>
+                              {vehicleDetail.instructionText ? (
+                                <View style={styles.rideDetailVehiclePill}>
+                                  <Text style={styles.rideDetailVehicleText}>
+                                    {vehicleDetail.instructionText}
+                                  </Text>
+                                </View>
+                              ) : null}
+                              {vehicleDetail.sayToDriverText ? (
+                                <View style={styles.rideDetailSayPill}>
+                                  <Text style={styles.rideDetailSayText}>
+                                    {vehicleDetail.sayToDriverText}
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </View>
+                          );
+                        })()}
                       </View>
                     </View>
                   );
                 })}
-              </View>
+                </View>
+                <CommuterTipsCard />
+              </>
             );
           })()}
           </View>
@@ -2641,7 +3014,7 @@ const styles = StyleSheet.create({
   },
   rideDetailRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     marginTop: 8,
   },
   rideDetailNumber: {
@@ -2652,6 +3025,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginRight: 9,
+    marginTop: 2,
   },
   rideDetailNumberText: {
     color: "#fff",
@@ -2670,6 +3044,47 @@ const styles = StyleSheet.create({
     color: "#6c757d",
     fontSize: 12,
     marginTop: 2,
+  },
+  rideDetailVehiclePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    marginTop: 4,
+    alignSelf: "flex-start",
+  },
+  rideDetailVehicleText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#0369A1",
+  },
+  rideDetailSayPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    alignSelf: "flex-start",
+  },
+  rideDetailSayText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#047857",
+  },
+  routeCardPlacardText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#0284c7",
+    marginTop: 3,
   },
   routeStopLine: {
     fontSize: 13,
@@ -2741,96 +3156,215 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     zIndex: 5,
   },
-  tripContent: {
+  tripAlertBannerWrapper: {
+    marginHorizontal: 14,
+    marginTop: 8,
+  },
+  tripCollapsedContainer: {
     position: "absolute",
     left: 12,
     right: 12,
-    bottom: 10,
+    bottom: 12,
   },
-  tripContentInner: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 24,
-    gap: 12,
+  tripCollapsedCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    padding: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 8,
   },
-  tripCompactHeader: {
+  tripCollapsedTopRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.16,
-    shadowRadius: 8,
-    elevation: 7,
+    justifyContent: "space-between",
   },
-  tripCompactHeaderText: {
+  tripCollapsedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  tripCollapsedBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#059669",
+    letterSpacing: 0.5,
+  },
+  tripCollapsedMeta: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  tripCollapsedTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginTop: 6,
+  },
+  tripCollapsedLocationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 6,
+  },
+  originDotSmall: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: GREEN,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  originDotInnerSmall: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: GREEN,
+  },
+  tripCollapsedLocationText: {
+    fontSize: 12,
+    color: "#475569",
+    fontWeight: "500",
+    flexShrink: 1,
+  },
+  tripPullUpBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#F1F5F9",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 10,
+  },
+  tripPullUpBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: GREEN,
+  },
+  tripExpandedModalOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    top: 70,
+    zIndex: 20,
+    justifyContent: "flex-end",
+  },
+  tripExpandedSheet: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "100%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderBottomWidth: 0,
+    overflow: "hidden",
+    flex: 1,
+  },
+  tripSheetHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
+    backgroundColor: "#ffffff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  tripSheetDragBar: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#CBD5E1",
+    alignSelf: "center",
+    marginBottom: 8,
+  },
+  tripSheetHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  tripSheetHeaderText: {
     flex: 1,
     marginRight: 10,
   },
-  tripCompactTitle: {
-    color: GREEN,
-    fontSize: 15,
+  tripSheetTitle: {
+    fontSize: 16,
     fontWeight: "700",
+    color: "#0F172A",
   },
-  tripCompactMeta: {
-    color: "#64748b",
+  tripSheetSubtitle: {
     fontSize: 12,
-    marginTop: 3,
+    fontWeight: "600",
+    color: "#64748B",
+    marginTop: 2,
   },
-  tripExpandedPanel: {
-    gap: 10,
-    marginTop: 10,
+  tripSheetCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  tripLocationCard: {
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.14,
-    shadowRadius: 7,
-    elevation: 6,
+  tripSheetScroll: {
+    flex: 1,
+  },
+  tripSheetScrollContent: {
+    padding: 16,
+    paddingBottom: 40,
+    gap: 12,
+  },
+  tripSheetLocationCard: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    padding: 12,
   },
   tripLocationRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    minHeight: 38,
+    minHeight: 34,
   },
   tripLocationText: {
     flex: 1,
-    color: "#495057",
-    fontSize: 14,
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "500",
   },
   tripConnector: {
     height: 8,
     width: 2,
-    backgroundColor: "#b8c7bf",
+    backgroundColor: "#CBD5E1",
     marginLeft: 9,
   },
-  tripDetailsCard: {
-    backgroundColor: "#fff",
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 7,
-    elevation: 5,
+  tripSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
   },
   tripSectionTitle: {
     color: GREEN,
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: "700",
-    borderBottomWidth: 1,
-    borderBottomColor: "#cfd8d2",
-    paddingBottom: 8,
-    marginBottom: 10,
   },
   tripStatsRow: {
     flexDirection: "row",
@@ -2951,11 +3485,43 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
-  tripStepText: {
+  tripStepContent: {
     flex: 1,
+  },
+  tripStepText: {
     color: "#334155",
     fontSize: 13,
     lineHeight: 18,
+  },
+  tripStepVehiclePill: {
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    marginTop: 4,
+    alignSelf: "flex-start",
+  },
+  tripStepVehicleText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#0369A1",
+  },
+  tripStepSayPill: {
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    marginTop: 4,
+    alignSelf: "flex-start",
+  },
+  tripStepSayText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#047857",
   },
   tripLiveDistance: {
     color: "#0d47a1",
@@ -2963,40 +3529,123 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginTop: 6,
   },
-  segmentPopup: {
-    position: "absolute",
-    top: 150,
-    left: 16,
-    right: 16,
-    zIndex: 8,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: "#FFD43B",
+  segmentCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     paddingHorizontal: 16,
     paddingVertical: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
     shadowRadius: 8,
-    elevation: 8,
+    elevation: 6,
+    zIndex: 10,
   },
-  segmentPopupTitle: {
-    fontSize: 16,
+  segmentCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  segmentBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  segmentBadgeText: {
+    fontSize: 11,
     fontWeight: "700",
-    color: "#1f2937",
-    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
-  segmentPopupLine: {
-    fontSize: 13,
-    color: "#334155",
+  segmentCloseBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmentTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginTop: 6,
     lineHeight: 20,
   },
-  segmentPopupClose: {
-    alignSelf: "flex-end",
-    color: GREEN,
-    fontWeight: "700",
+  segmentDetailCallout: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     marginTop: 6,
+  },
+  segmentDetailCalloutText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#0369A1",
+    flex: 1,
+  },
+  segmentSayCallout: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  segmentSayCalloutText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#047857",
+    flex: 1,
+  },
+  segmentChipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+  },
+  segmentChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  segmentChipFare: {
+    backgroundColor: "#E8F5E9",
+    borderColor: "#C8E6C9",
+  },
+  segmentChipFareText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: GREEN,
+  },
+  segmentChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
   },
   tripHudOuter: {
     position: "absolute",
@@ -3084,6 +3733,44 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",
+  },
+  commuterTipsCard: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  commuterTipsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 6,
+  },
+  commuterTipsTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#92400E",
+    letterSpacing: 0.2,
+  },
+  commuterTipItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 4,
+  },
+  commuterTipBullet: {
+    fontSize: 12,
+    color: "#D97706",
+    lineHeight: 16,
+  },
+  commuterTipText: {
+    fontSize: 12,
+    color: "#78350F",
+    lineHeight: 17,
+    flex: 1,
   },
   pressed: {
     opacity: 0.75,
