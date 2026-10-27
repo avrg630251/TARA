@@ -8,9 +8,9 @@ import { supabaseAuthStorage } from "@/lib/supabase-auth-storage";
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-if (__DEV__ && (!supabaseUrl || !supabaseAnonKey)) {
+if (!supabaseUrl || !supabaseAnonKey || supabaseUrl.includes("placeholder")) {
   console.warn(
-    "[TARA] Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in a .env file (see .env.example)."
+    "[TARA] EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY is missing or placeholder. Ensure .env is present before building!"
   );
 }
 

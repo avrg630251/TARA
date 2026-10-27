@@ -1,3 +1,4 @@
+import { useAuth } from "@/contexts/AuthContext";
 import type { DisplayRoutePlan } from "@/lib/transitPlanOptions";
 import { normalizeTravelFare } from "@/lib/transitRoutes";
 import {
@@ -43,6 +44,9 @@ type TravelContextValue = {
 const TravelContext = createContext<TravelContextValue | null>(null);
 
 export function TravelProvider({ children }: { children: ReactNode }) {
+  const { session } = useAuth();
+  const userId = session?.user?.id ?? null;
+
   const [ready, setReady] = useState(false);
   const [bookmarks, setBookmarks] = useState<SavedRouteBookmark[]>([]);
   const [recentTrips, setRecentTrips] = useState<RecentTrip[]>([]);
@@ -50,20 +54,31 @@ export function TravelProvider({ children }: { children: ReactNode }) {
 
   const refreshTravelData = useCallback(async () => {
     try {
-      const [b, r] = await Promise.all([loadBookmarks(), loadRecentTrips()]);
+      const [b, r] = await Promise.all([
+        loadBookmarks(userId),
+        loadRecentTrips(userId),
+      ]);
       setBookmarks(bookmarksEqual(b));
       recentTripsRef.current = r;
       setRecentTrips(r);
     } catch (error) {
       console.error("[TARA] Could not refresh travel data.", error);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     let cancelled = false;
+    setReady(false);
+    setBookmarks([]);
+    setRecentTrips([]);
+    recentTripsRef.current = [];
+
     (async () => {
       try {
-        const [b, r] = await Promise.all([loadBookmarks(), loadRecentTrips()]);
+        const [b, r] = await Promise.all([
+          loadBookmarks(userId),
+          loadRecentTrips(userId),
+        ]);
         if (cancelled) return;
         setBookmarks(bookmarksEqual(b));
         setRecentTrips(r);
@@ -77,7 +92,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [userId]);
 
   const isBookmarked = useCallback(
     (plan: DisplayRoutePlan, meta: TravelMeta): boolean => {
@@ -133,18 +148,21 @@ export function TravelProvider({ children }: { children: ReactNode }) {
             ];
       const deduped = bookmarksEqual(next);
       setBookmarks(deduped);
-      await persistBookmarks(deduped);
+      await persistBookmarks(deduped, userId);
     },
-    [bookmarks]
+    [bookmarks, userId]
   );
 
-  const removeBookmark = useCallback(async (key: string) => {
-    setBookmarks((prev) => {
-      const next = prev.filter((x) => x.key !== key);
-      void persistBookmarks(next);
-      return next;
-    });
-  }, []);
+  const removeBookmark = useCallback(
+    async (key: string) => {
+      setBookmarks((prev) => {
+        const next = prev.filter((x) => x.key !== key);
+        void persistBookmarks(next, userId);
+        return next;
+      });
+    },
+    [userId]
+  );
 
   const addRecentFromTrip = useCallback(
     async (plan: DisplayRoutePlan, meta: TravelMeta) => {
@@ -178,19 +196,22 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       const next = mergeRecentTrips(recentTripsRef.current, item);
       recentTripsRef.current = next;
       setRecentTrips(next);
-      await persistRecentTrips(next);
+      await persistRecentTrips(next, userId);
     },
-    []
+    [userId]
   );
 
-  const removeRecent = useCallback((key: string) => {
-    setRecentTrips((prev) => {
-      const next = prev.filter((x) => x.key !== key);
-      recentTripsRef.current = next;
-      void persistRecentTrips(next);
-      return next;
-    });
-  }, []);
+  const removeRecent = useCallback(
+    (key: string) => {
+      setRecentTrips((prev) => {
+        const next = prev.filter((x) => x.key !== key);
+        recentTripsRef.current = next;
+        void persistRecentTrips(next, userId);
+        return next;
+      });
+    },
+    [userId]
+  );
 
   const value = useMemo(
     () => ({

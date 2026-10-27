@@ -3,8 +3,13 @@ import type { LatLng } from "@/lib/googleMapsRoutes";
 import type { DisplayRouteSegment } from "@/lib/transitPlanOptions";
 import { normalizeTravelFare } from "@/lib/transitRoutes";
 
-const BOOKMARKS_KEY = "tara:bookmarks";
-const RECENT_KEY = "tara:recentTrips";
+export function getBookmarksKey(userId?: string | null): string {
+  return userId ? `tara:${userId}:bookmarks` : "tara:guest:bookmarks";
+}
+
+export function getRecentTripsKey(userId?: string | null): string {
+  return userId ? `tara:${userId}:recentTrips` : "tara:guest:recentTrips";
+}
 
 const MAX_BOOKMARKS = 50;
 const MAX_RECENT = 15;
@@ -60,8 +65,9 @@ function parseJson<T>(raw: string | null, fallback: T): T {
   }
 }
 
-export async function loadBookmarks(): Promise<SavedRouteBookmark[]> {
-  const raw = await kvGet(BOOKMARKS_KEY);
+export async function loadBookmarks(userId?: string | null): Promise<SavedRouteBookmark[]> {
+  const key = getBookmarksKey(userId);
+  const raw = await kvGet(key);
   const list = parseJson<SavedRouteBookmark[]>(raw, []);
   if (!Array.isArray(list)) return [];
   const normalized = list.slice(0, MAX_BOOKMARKS).map((b) => {
@@ -88,17 +94,22 @@ export async function loadBookmarks(): Promise<SavedRouteBookmark[]> {
       (b.fareText !== normalized[i].fareText || b.fareValue !== normalized[i].fareValue)
   );
   if (hasChanges) {
-    void kvSet(BOOKMARKS_KEY, JSON.stringify(normalized));
+    void kvSet(key, JSON.stringify(normalized));
   }
   return normalized;
 }
 
-export async function persistBookmarks(list: SavedRouteBookmark[]): Promise<void> {
-  await kvSet(BOOKMARKS_KEY, JSON.stringify(list.slice(0, MAX_BOOKMARKS)));
+export async function persistBookmarks(
+  list: SavedRouteBookmark[],
+  userId?: string | null
+): Promise<void> {
+  const key = getBookmarksKey(userId);
+  await kvSet(key, JSON.stringify(list.slice(0, MAX_BOOKMARKS)));
 }
 
-export async function loadRecentTrips(): Promise<RecentTrip[]> {
-  const raw = await kvGet(RECENT_KEY);
+export async function loadRecentTrips(userId?: string | null): Promise<RecentTrip[]> {
+  const key = getRecentTripsKey(userId);
+  const raw = await kvGet(key);
   const list = parseJson<RecentTrip[]>(raw, []);
   if (!Array.isArray(list)) return [];
   const normalized = list.slice(0, MAX_RECENT).map((t) => {
@@ -125,13 +136,17 @@ export async function loadRecentTrips(): Promise<RecentTrip[]> {
       (t.fareText !== normalized[i].fareText || t.fareValue !== normalized[i].fareValue)
   );
   if (hasChanges) {
-    void kvSet(RECENT_KEY, JSON.stringify(normalized));
+    void kvSet(key, JSON.stringify(normalized));
   }
   return normalized;
 }
 
-export async function persistRecentTrips(list: RecentTrip[]): Promise<void> {
-  await kvSet(RECENT_KEY, JSON.stringify(list.slice(0, MAX_RECENT)));
+export async function persistRecentTrips(
+  list: RecentTrip[],
+  userId?: string | null
+): Promise<void> {
+  const key = getRecentTripsKey(userId);
+  await kvSet(key, JSON.stringify(list.slice(0, MAX_RECENT)));
 }
 
 /** Keep newest-first; dedupe same origin + destination labels. */

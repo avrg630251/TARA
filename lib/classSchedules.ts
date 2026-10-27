@@ -13,7 +13,9 @@ export type ClassScheduleItem = {
   routeHint?: string;
 };
 
-const CLASS_SCHEDULES_KEY = "tara:classSchedules";
+export function getClassSchedulesKey(userId?: string | null): string {
+  return userId ? `tara:${userId}:classSchedules` : "tara:guest:classSchedules";
+}
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -92,24 +94,25 @@ export function parseClassScheduleText(raw: string): ClassScheduleItem[] {
 }
 
 export async function loadClassSchedules(
-  accountSchedules?: unknown
+  accountSchedules?: unknown,
+  userId?: string | null
 ): Promise<ClassScheduleItem[]> {
-  if (Array.isArray(accountSchedules) && accountSchedules.length) {
+  if (Array.isArray(accountSchedules)) {
     return normalizeLoadedSchedules(accountSchedules);
   }
 
-  const raw = await kvGet(CLASS_SCHEDULES_KEY);
-  {
-    if (!raw) return [];
-    try {
-      const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as Array<
-        Partial<ClassScheduleItem> & { title?: string; day?: string }
-      >;
-      if (!Array.isArray(parsed) || !parsed.length) return [];
-      return normalizeLoadedSchedules(parsed);
-    } catch {
-      return [];
-    }
+  if (!userId) return [];
+
+  const raw = await kvGet(getClassSchedulesKey(userId));
+  if (!raw) return [];
+  try {
+    const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as Array<
+      Partial<ClassScheduleItem> & { title?: string; day?: string }
+    >;
+    if (!Array.isArray(parsed) || !parsed.length) return [];
+    return normalizeLoadedSchedules(parsed);
+  } catch {
+    return [];
   }
 }
 
@@ -117,32 +120,35 @@ function normalizeLoadedSchedules(
   parsed: Array<Partial<ClassScheduleItem> & { title?: string; day?: string }>
 ): ClassScheduleItem[] {
   return parsed.map((item, index) => {
-        const subject = item.subject?.trim() || item.title?.trim() || "Class";
-        const days = Array.isArray(item.days)
-          ? item.days.filter((day): day is string => typeof day === "string")
-          : item.day
-            ? [item.day]
-            : ["Mon"];
-        return {
-          id: item.id || `${subject}-${index}`,
-          subjectCode: item.subjectCode?.trim() || "",
-          subject,
-          days,
-          time: normalizeTimeValue(item.time || "08:00"),
-          routeHint: item.routeHint,
-        };
-      });
+    const subject = item.subject?.trim() || item.title?.trim() || "Class";
+    const days = Array.isArray(item.days)
+      ? item.days.filter((day): day is string => typeof day === "string")
+      : item.day
+        ? [item.day]
+        : ["Mon"];
+    return {
+      id: item.id || `${subject}-${index}`,
+      subjectCode: item.subjectCode?.trim() || "",
+      subject,
+      days,
+      time: normalizeTimeValue(item.time || "08:00"),
+      routeHint: item.routeHint,
+    };
+  });
 }
 
-export async function saveClassSchedules(items: ClassScheduleItem[]): Promise<void> {
-  await kvSet(CLASS_SCHEDULES_KEY, JSON.stringify(items));
+export async function saveClassSchedules(
+  items: ClassScheduleItem[],
+  userId?: string | null
+): Promise<void> {
+  await kvSet(getClassSchedulesKey(userId), JSON.stringify(items));
 }
 
 export function getNextClassInfo(
   items: ClassScheduleItem[],
   now = new Date()
 ): { item: ClassScheduleItem | null; minutesUntil: number | null } {
-  if (!items.length) return { item: null, minutesUntil: null };
+  if (!items || !items.length) return { item: null, minutesUntil: null };
 
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const todayName = DAY_NAMES[now.getDay()];
@@ -183,7 +189,7 @@ export function getNextClassInfo(
     .sort((a, b) => a.minutesUntil - b.minutesUntil);
 
   if (!candidates.length) {
-    return { item: items[0], minutesUntil: null };
+    return { item: null, minutesUntil: null };
   }
 
   const nearest = candidates[0];
@@ -199,9 +205,12 @@ export function sortRoutesForSchedule<T extends { etaMinutes?: number | null }>(
   schedules: ClassScheduleItem[],
   now = new Date()
 ): T[] {
-  if (!schedules.length) return items;
+  if (!schedules || !schedules.length) return items;
   const nextClass = getNextClassInfo(schedules, now);
-  const targetMinutes = nextClass.minutesUntil ?? 60;
+  if (!nextClass.item || nextClass.minutesUntil == null) {
+    return items;
+  }
+  const targetMinutes = nextClass.minutesUntil;
 
   // When the next class is close, arrival time matters more than fare.
   if (targetMinutes <= 90) {

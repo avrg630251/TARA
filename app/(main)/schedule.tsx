@@ -32,22 +32,24 @@ export default function ScheduleScreen() {
   const [time, setTime] = useState("");
   const [meridiem, setMeridiem] = useState<"AM" | "PM">("AM");
   const { session } = useAuth();
+  const userId = session?.user?.id ?? null;
 
   useEffect(() => {
     let cancelled = false;
-    void loadClassSchedules(session?.user.user_metadata?.class_schedules).then((saved) => {
+    setItems([]);
+    void loadClassSchedules(session?.user?.user_metadata?.class_schedules, userId).then((saved) => {
       if (!cancelled) setItems(saved);
     });
     return () => {
       cancelled = true;
     };
-  }, [session?.user.user_metadata?.class_schedules]);
+  }, [userId, session?.user?.user_metadata?.class_schedules]);
 
   const nextClass = useMemo(() => getNextClassInfo(items), [items]);
 
   async function saveAndSync(next: ClassScheduleItem[]) {
     setItems(next);
-    await saveClassSchedules(next);
+    await saveClassSchedules(next, userId);
     const { error } = await supabase.auth.updateUser({
       data: { class_schedules: next },
     });

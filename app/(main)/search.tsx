@@ -69,7 +69,7 @@ const DLSAU_COORDINATE: LatLng = {
   longitude: 120.999293,
 };
 const MAX_ROUTE_RADIUS_METERS = 500_000;
-const CUSTOM_ROUTE_DATA_TIMEOUT_MS = 7000;
+const CUSTOM_ROUTE_DATA_TIMEOUT_MS = 20000;
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -393,13 +393,16 @@ export default function SearchMapScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    void loadClassSchedules(session?.user.user_metadata?.class_schedules).then((items) => {
+    const userMeta = session?.user?.user_metadata?.class_schedules;
+    const userId = session?.user?.id ?? null;
+    setClassSchedules([]);
+    void loadClassSchedules(userMeta, userId).then((items) => {
       if (!cancelled) setClassSchedules(items);
     });
     return () => {
       cancelled = true;
     };
-  }, [session?.user.user_metadata?.class_schedules]);
+  }, [session?.user?.id, session?.user?.user_metadata?.class_schedules]);
 
   const fitEdgePadding = useMemo(
     () => ({
@@ -1254,9 +1257,19 @@ export default function SearchMapScreen() {
             if (status !== "granted") {
               throw new Error("Location permission is required for Your location.");
             }
-            const pos = await Location.getCurrentPositionAsync({
-              accuracy: Location.Accuracy.High,
-            });
+            let pos: Location.LocationObject | null = null;
+            try {
+              pos = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+              });
+            } catch {
+              pos = await Location.getLastKnownPositionAsync();
+            }
+            if (!pos) {
+              pos = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Lowest,
+              });
+            }
             originGeo = {
               lat: pos.coords.latitude,
               lng: pos.coords.longitude,
@@ -1276,6 +1289,7 @@ export default function SearchMapScreen() {
           longitude: originGeo.lng,
         });
 
+      console.log("[TARA] Searching custom itineraries for origin:", originGeo);
       const customDestinations = await withTimeout(
         fetchNearestCustomItinerary({
           latitude: originGeo.lat,
@@ -1283,7 +1297,11 @@ export default function SearchMapScreen() {
         }),
         CUSTOM_ROUTE_DATA_TIMEOUT_MS,
         "Custom route data timed out."
-      ).catch(() => []);
+      ).catch((err) => {
+        console.warn("[TARA] Custom route fetch failed or timed out:", err);
+        return [];
+      });
+      console.log("[TARA] Custom itineraries count:", customDestinations.length);
 
       if (requestId !== routeRequestIdRef.current) return;
 
@@ -1391,10 +1409,10 @@ export default function SearchMapScreen() {
           }
           return (a.fareValue ?? Infinity) - (b.fareValue ?? Infinity);
         });
-        const scheduleOrderedPlans = sortRoutesForSchedule(
-          orderedPlans,
-          classSchedules
-        );
+        const scheduleOrderedPlans =
+          classSchedules && classSchedules.length > 0
+            ? sortRoutesForSchedule(orderedPlans, classSchedules)
+            : orderedPlans;
         const selectedPlan = scheduleOrderedPlans[0];
         setDestinationCoord(selectedPlan?.segments?.at(-1)?.coordinates.at(-1) ?? null);
         setRoutePlans(scheduleOrderedPlans);
