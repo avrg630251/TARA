@@ -3,9 +3,11 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthBackButton } from "@/components/AuthBackButton";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function ChooseAuthScreen() {
   const router = useRouter();
+  const { loginAsGuest } = useAuth();
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -36,6 +38,19 @@ export default function ChooseAuthScreen() {
           onPress={() => router.push("/signup")}
         >
           <Text style={styles.outlineBtnText}>Sign up</Text>
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.guestBtn,
+            pressed && styles.btnPressed,
+          ]}
+          onPress={async () => {
+            await loginAsGuest();
+            router.replace("/(main)");
+          }}
+        >
+          <Text style={styles.guestBtnText}>Continue as Guest (Skip login)</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -100,5 +115,16 @@ const styles = StyleSheet.create({
     color: "#1B4332",
     fontSize: 16,
     fontWeight: "600",
+  },
+  guestBtn: {
+    marginTop: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  guestBtnText: {
+    color: "#64748b",
+    fontSize: 14,
+    fontWeight: "600",
+    textDecorationLine: "underline",
   },
 });

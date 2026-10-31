@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useCallback, useMemo, useState } from "react";
 
+import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
 import { normalizeTravelFare } from "@/lib/transitRoutes";
 
@@ -36,6 +37,7 @@ type DisplayHistoryItem = {
 
 export default function SavedScreen() {
   const router = useRouter();
+  const { isGuest } = useAuth();
   const {
     ready,
     bookmarks,
@@ -51,9 +53,34 @@ export default function SavedScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void refreshTravelData();
-    }, [refreshTravelData])
+      if (!isGuest) {
+        void refreshTravelData();
+      }
+    }, [refreshTravelData, isGuest])
   );
+
+  if (isGuest) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <View style={styles.guestLockedContainer}>
+          <Ionicons name="lock-closed-outline" size={64} color="#94a3b8" />
+          <Text style={styles.guestLockedTitle}>Sign In Required</Text>
+          <Text style={styles.guestLockedSubtitle}>
+            Trip history and bookmarked routes are saved to registered accounts. Please sign in or create an account to view and save routes.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.guestSignInBtn,
+              pressed && { opacity: 0.85 },
+            ]}
+            onPress={() => router.push("/welcome")}
+          >
+            <Text style={styles.guestSignInBtnText}>Sign In / Register</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const items = useMemo<DisplayHistoryItem[]>(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -583,5 +610,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     lineHeight: 20,
+  },
+  guestLockedContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
+  guestLockedTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#1e293b",
+    marginTop: 18,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  guestLockedSubtitle: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#64748b",
+    textAlign: "center",
+    marginBottom: 24,
+  },
+  guestSignInBtn: {
+    backgroundColor: GREEN,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  guestSignInBtnText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "700",
   },
 });

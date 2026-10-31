@@ -9,14 +9,14 @@ import { TravelProvider } from "@/contexts/TravelContext";
 const GREEN = "#1B4332";
 
 export default function MainLayout() {
-  const { session, loading } = useAuth();
+  const { session, loading, isAdmin, isGuest } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !session) {
+    if (!loading && !session && !isGuest) {
       router.replace("/welcome");
     }
-  }, [loading, router, session]);
+  }, [loading, router, session, isGuest]);
 
   if (loading) {
     return (
@@ -26,7 +26,7 @@ export default function MainLayout() {
     );
   }
 
-  if (!session) {
+  if (!session && !isGuest) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#1B4332" />
@@ -71,6 +71,7 @@ export default function MainLayout() {
           name="saved"
           options={{
             title: "History",
+            href: isGuest ? null : undefined,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="time-outline" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
@@ -80,6 +81,7 @@ export default function MainLayout() {
           name="schedule"
           options={{
             title: "Schedule",
+            href: isGuest ? null : undefined,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="calendar-outline" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
@@ -89,8 +91,19 @@ export default function MainLayout() {
           name="profile"
           options={{
             title: "Profile",
+            href: isGuest ? null : undefined,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="person-outline" size={size ?? 24} color={typeof color === "number" ? GREEN : color ?? GREEN} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="admin"
+          options={{
+            title: "Admin",
+            href: isAdmin ? ("/(main)/admin" as any) : null,
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="shield-checkmark-outline" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />

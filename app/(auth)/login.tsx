@@ -1,4 +1,4 @@
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -11,9 +11,12 @@ import {
 
 import { AuthScreen } from "@/components/AuthScreen";
 import { PasswordField } from "@/components/PasswordField";
+import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 
 export default function LoginScreen() {
+  const router = useRouter();
+  const { loginAsGuest } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +47,7 @@ export default function LoginScreen() {
   return (
     <AuthScreen>
       <View style={styles.page}>
-        <Text style={styles.brand}>TARA!</Text>
+        <Text style={styles.brand}>TARA-neta</Text>
         <Text style={styles.title}>Sign In</Text>
 
         <View style={styles.card}>
@@ -98,6 +101,19 @@ export default function LoginScreen() {
               </Pressable>
             </Link>
           </View>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.guestBtn,
+              pressed && { opacity: 0.7 },
+            ]}
+            onPress={async () => {
+              await loginAsGuest();
+              router.replace("/(main)");
+            }}
+          >
+            <Text style={styles.guestBtnText}>Skip login · Continue as Guest</Text>
+          </Pressable>
         </View>
       </View>
     </AuthScreen>
@@ -198,6 +214,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#1C5141",
+    textDecorationLine: "underline",
+  },
+  guestBtn: {
+    marginTop: 14,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  guestBtnText: {
+    color: "#64748b",
+    fontSize: 14,
+    fontWeight: "600",
     textDecorationLine: "underline",
   },
 });

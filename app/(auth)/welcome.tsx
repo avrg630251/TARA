@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Animated,
   Easing,
@@ -17,6 +18,7 @@ const jeepneyAsset = require("../../assets/images/jeepney.png");
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const { loginAsGuest } = useAuth();
   const [jeepneyTranslateX] = useState(() => new Animated.Value(-280));
   const [jeepneyOpacity] = useState(() => new Animated.Value(0));
   const [jeepneyScale] = useState(() => new Animated.Value(0.9));
@@ -88,7 +90,7 @@ export default function WelcomeScreen() {
             source={jeepneyAsset}
             style={styles.heroImage}
             resizeMode="contain"
-            accessibilityLabel="TARA jeepney"
+            accessibilityLabel="TARA-neta jeepney"
           />
         </Animated.View>
 
@@ -101,7 +103,10 @@ export default function WelcomeScreen() {
             },
           ]}
         >
-          <Text style={styles.title}>TARA!</Text>
+          <Text style={styles.title}>TARA-neta</Text>
+          <Text style={styles.subtitle}>
+            Your public transit companion to De La Salle Araneta University
+          </Text>
 
           <Pressable
             style={({ pressed }) => [
@@ -113,6 +118,21 @@ export default function WelcomeScreen() {
             accessibilityLabel="Get started"
           >
             <Text style={styles.primaryText}>GET STARTED</Text>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.guestBtn,
+              pressed && styles.guestBtnPressed,
+            ]}
+            onPress={async () => {
+              await loginAsGuest();
+              router.replace("/(main)");
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Continue as Guest"
+          >
+            <Text style={styles.guestBtnText}>Skip Login · Continue as Guest</Text>
           </Pressable>
         </Animated.View>
       </View>
@@ -148,14 +168,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   title: {
-    fontSize: 48,
-    lineHeight: 48,
+    fontSize: 42,
+    lineHeight: 46,
     color: GREEN,
     fontWeight: "700",
     letterSpacing: -0.48,
     textAlign: "center",
     marginTop: 10,
-    marginBottom: 18,
+    marginBottom: 6,
+    fontFamily: "System",
+  },
+  subtitle: {
+    fontSize: 14,
+    color: "#475569",
+    textAlign: "center",
+    maxWidth: 290,
+    marginBottom: 26,
+    lineHeight: 20,
     fontFamily: "System",
   },
   primary: {
@@ -180,5 +209,20 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     letterSpacing: 0,
     fontFamily: "System",
+  },
+  guestBtn: {
+    marginTop: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  guestBtnPressed: {
+    opacity: 0.7,
+  },
+  guestBtnText: {
+    color: "#64748b",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

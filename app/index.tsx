@@ -5,14 +5,14 @@ import { useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function Index() {
-  const { session, loading } = useAuth();
+  const { session, loading, isGuest } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading) {
-      router.replace(session ? "/(main)" : "/welcome");
+      router.replace(session || isGuest ? "/(main)" : "/welcome");
     }
-  }, [loading, router, session]);
+  }, [loading, router, session, isGuest]);
 
   return (
     <View style={styles.centered}>

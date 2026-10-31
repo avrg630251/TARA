@@ -19,6 +19,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
+import {
+  ROLE_BADGE_COLORS,
+  ROLE_LABELS,
+  type UserRole,
+} from "@/lib/adminAndFeedback";
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { User } from "@supabase/supabase-js";
@@ -55,7 +60,7 @@ function schoolFromUser(user: User | undefined) {
 }
 
 export default function ProfileScreen() {
-  const { session } = useAuth();
+  const { session, userRole, isAdmin, setUserRole, isGuest } = useAuth();
   const { bookmarks, recentTrips } = useTravel();
   const router = useRouter();
   const user = session?.user;
@@ -269,7 +274,7 @@ export default function ProfileScreen() {
 
   function openSupport() {
     void Linking.openURL(
-      "mailto:tara.testing.app@gmail.com?subject=TARA%20Help%20Request"
+      "mailto:tara.testing.app@gmail.com?subject=TARA-neta%20Help%20Request"
     ).catch(() =>
       Alert.alert("Unable to open email", "Please contact tara.testing.app@gmail.com.")
     );
@@ -279,6 +284,29 @@ export default function ProfileScreen() {
     setSigningOut(true);
     await supabase.auth.signOut();
     setSigningOut(false);
+  }
+
+  if (isGuest) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <View style={styles.guestLockedContainer}>
+          <Ionicons name="person-circle-outline" size={72} color="#94a3b8" />
+          <Text style={styles.guestLockedTitle}>Guest User</Text>
+          <Text style={styles.guestLockedSubtitle}>
+            Profile customization, student discount settings, and schedule tracking are reserved for registered accounts. Please sign in or register.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.guestSignInBtn,
+              pressed && { opacity: 0.85 },
+            ]}
+            onPress={() => router.push("/welcome")}
+          >
+            <Text style={styles.guestSignInBtnText}>Sign In / Register</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -306,6 +334,25 @@ export default function ProfileScreen() {
           </Pressable>
           <Text style={styles.heroName}>{displayName}</Text>
           <Text style={styles.heroSchool}>{school}</Text>
+          <View
+            style={[
+              styles.heroRolePill,
+              {
+                backgroundColor: (ROLE_BADGE_COLORS[userRole] || ROLE_BADGE_COLORS.user).bg,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.heroRoleText,
+                {
+                  color: (ROLE_BADGE_COLORS[userRole] || ROLE_BADGE_COLORS.user).text,
+                },
+              ]}
+            >
+              {ROLE_LABELS[userRole] || "Registered User"}
+            </Text>
+          </View>
         </View>
 
         <View style={styles.statsCard}>
@@ -314,7 +361,7 @@ export default function ProfileScreen() {
           <Stat value={`₱${totalFare.toFixed(2)}`} label="Total fare" />
         </View>
 
-        <Text style={styles.sectionLabel}>Account</Text>
+        <Text style={styles.sectionLabel}>Account Settings</Text>
         <View style={styles.menuCard}>
           <MenuRow icon="person-outline" label="Edit Profile" onPress={() => setEditVisible(true)} />
           <MenuRow
@@ -330,7 +377,7 @@ export default function ProfileScreen() {
           <MenuRow icon="calendar-outline" label="Schedule" onPress={() => router.push("/(main)/schedule")} />
         </View>
 
-        <Text style={styles.sectionLabel}>Account</Text>
+        <Text style={styles.sectionLabel}>Support</Text>
         <View style={styles.menuCard}>
           <MenuRow icon="help-circle-outline" label="Help & Support" onPress={openSupport} />
         </View>
@@ -445,6 +492,7 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
     </SafeAreaView>
   );
 }
@@ -486,6 +534,18 @@ const styles = StyleSheet.create({
   },
   heroName: { color: "#fff", fontSize: 18, fontWeight: "700" },
   heroSchool: { color: "#d9ebe4", fontSize: 12, marginTop: 4 },
+  heroRolePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.4)",
+  },
+  heroRoleText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
   statsCard: {
     flexDirection: "row", backgroundColor: "#fff", marginHorizontal: 16, marginTop: 16,
     borderRadius: 14, paddingVertical: 15, elevation: 2, shadowColor: "#000",
@@ -517,4 +577,37 @@ const styles = StyleSheet.create({
   optionText: { color: "#26312c", fontSize: 16 },
   cancelButton: { alignItems: "center", paddingVertical: 12, marginTop: 6 },
   cancelText: { color: "#68756f", fontSize: 15, fontWeight: "600" },
+  guestLockedContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
+  guestLockedTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#1e293b",
+    marginTop: 18,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  guestLockedSubtitle: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#64748b",
+    textAlign: "center",
+    marginBottom: 24,
+  },
+  guestSignInBtn: {
+    backgroundColor: GREEN,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  guestSignInBtnText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
 });

@@ -44,8 +44,8 @@ type TravelContextValue = {
 const TravelContext = createContext<TravelContextValue | null>(null);
 
 export function TravelProvider({ children }: { children: ReactNode }) {
-  const { session } = useAuth();
-  const userId = session?.user?.id ?? null;
+  const { session, isGuest } = useAuth();
+  const userId = isGuest ? null : (session?.user?.id ?? null);
 
   const [ready, setReady] = useState(false);
   const [bookmarks, setBookmarks] = useState<SavedRouteBookmark[]>([]);
@@ -53,6 +53,12 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   const recentTripsRef = useRef<RecentTrip[]>([]);
 
   const refreshTravelData = useCallback(async () => {
+    if (isGuest) {
+      setBookmarks([]);
+      setRecentTrips([]);
+      recentTripsRef.current = [];
+      return;
+    }
     try {
       const [b, r] = await Promise.all([
         loadBookmarks(userId),
@@ -64,7 +70,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
     } catch {
       // Silently ignore travel data refresh errors
     }
-  }, [userId]);
+  }, [userId, isGuest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,6 +78,11 @@ export function TravelProvider({ children }: { children: ReactNode }) {
     setBookmarks([]);
     setRecentTrips([]);
     recentTripsRef.current = [];
+
+    if (isGuest) {
+      setReady(true);
+      return;
+    }
 
     (async () => {
       try {
@@ -92,7 +103,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, isGuest]);
 
   const isBookmarked = useCallback(
     (plan: DisplayRoutePlan, meta: TravelMeta): boolean => {
@@ -108,6 +119,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
 
   const toggleBookmark = useCallback(
     async (plan: DisplayRoutePlan, meta: TravelMeta) => {
+      if (isGuest) return;
       const key = makeBookmarkKey(
         plan.id,
         meta.originLabel,
@@ -150,22 +162,24 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       setBookmarks(deduped);
       await persistBookmarks(deduped, userId);
     },
-    [bookmarks, userId]
+    [bookmarks, userId, isGuest]
   );
 
   const removeBookmark = useCallback(
     async (key: string) => {
+      if (isGuest) return;
       setBookmarks((prev) => {
         const next = prev.filter((x) => x.key !== key);
         void persistBookmarks(next, userId);
         return next;
       });
     },
-    [userId]
+    [userId, isGuest]
   );
 
   const addRecentFromTrip = useCallback(
     async (plan: DisplayRoutePlan, meta: TravelMeta) => {
+      if (isGuest) return;
       const startedAt = new Date().toISOString();
       const normalizedFare = normalizeTravelFare({
         routeName: plan.routeName,
@@ -205,11 +219,12 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       setRecentTrips(next);
       await persistRecentTrips(next, userId);
     },
-    [userId]
+    [userId, isGuest]
   );
 
   const removeRecent = useCallback(
     async (key: string) => {
+      if (isGuest) return;
       const baseList =
         recentTripsRef.current.length > 0
           ? recentTripsRef.current
@@ -219,7 +234,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       setRecentTrips(next);
       await persistRecentTrips(next, userId);
     },
-    [userId]
+    [userId, isGuest]
   );
 
   const value = useMemo(

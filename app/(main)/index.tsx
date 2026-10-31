@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -54,7 +55,7 @@ function formatTripDate(iso: string) {
 }
 
 export default function HomeScreen() {
-  const { session } = useAuth();
+  const { session, isGuest, isAdmin, setUserRole } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
@@ -68,10 +69,10 @@ export default function HomeScreen() {
     "loading" | "ok" | "fallback"
   >("loading");
 
-  const firstName = useMemo(
-    () => displayNameFromSession(session?.user),
-    [session?.user]
-  );
+  const firstName = useMemo(() => {
+    if (isGuest) return "Guest";
+    return displayNameFromSession(session?.user);
+  }, [session?.user, isGuest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,8 +116,24 @@ export default function HomeScreen() {
       <View style={styles.headerShell}>
         <SafeAreaView edges={["top"]} style={styles.headerSafe}>
           <View style={styles.headerInner}>
-            <Text style={styles.greeting}>Hello, {firstName}!</Text>
-            <Text style={styles.tagline}>Tara! Saan tayo ngayon?</Text>
+            <View style={styles.greetingRow}>
+              <View style={styles.greetingTextWrap}>
+                <Text style={styles.greeting}>Hello, {firstName}!</Text>
+                <Text style={styles.tagline}>Tara-neta! Saan tayo ngayon?</Text>
+              </View>
+              {isGuest && (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.guestSignInBadge,
+                    pressed && { opacity: 0.8 },
+                  ]}
+                  onPress={() => router.push("/welcome")}
+                >
+                  <Ionicons name="log-in-outline" size={15} color="#fff" />
+                  <Text style={styles.guestSignInBadgeText}>Sign In</Text>
+                </Pressable>
+              )}
+            </View>
 
             <Pressable
               style={({ pressed }) => [
@@ -140,6 +157,43 @@ export default function HomeScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        
+        {/* Quick Transit Action Channels */}
+        <View style={styles.quickChannelsRow}>
+          <Pressable
+            style={({ pressed }) => [styles.quickChannelCard, pressed && { opacity: 0.88 }]}
+            onPress={() => router.push("/guides" as any)}
+          >
+            <View style={[styles.quickChannelIconWrap, { backgroundColor: "#dbeafe" }]}>
+              <Ionicons name="megaphone" size={18} color="#1e40af" />
+            </View>
+            <View style={styles.quickChannelTextWrap}>
+              <Text style={styles.quickChannelTitle}>Transit Advisories</Text>
+              <Text style={styles.quickChannelSub}>Official campus travel alerts</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.quickChannelCard, pressed && { opacity: 0.88 }]}
+            onPress={() =>
+              router.push({
+                pathname: "/feedback",
+                params: { tab: "submit", category: "road_update" },
+              } as any)
+            }
+          >
+            <View style={[styles.quickChannelIconWrap, { backgroundColor: "#fef3c7" }]}>
+              <Ionicons name="alert-circle" size={18} color="#92400e" />
+            </View>
+            <View style={styles.quickChannelTextWrap}>
+              <Text style={styles.quickChannelTitle}>Report Transit Issue</Text>
+              <Text style={styles.quickChannelSub}>Reroutes, delays & feedback</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+          </Pressable>
+        </View>
+
         <View style={styles.mapSectionHeader}>
           <Text style={styles.mapSectionTitle}>Map Preview</Text>
           {locationStatus === "loading" ? (
@@ -158,17 +212,32 @@ export default function HomeScreen() {
 
         <View style={styles.recentHeader}>
           <Text style={styles.recentTitle}>Bookmarked routes</Text>
-          <Pressable
-            hitSlop={8}
-            onPress={() => router.push("/saved")}
-            accessibilityRole="button"
-            accessibilityLabel="Open trip history"
-          >
-            <Text style={styles.seeAll}>See all</Text>
-          </Pressable>
+          {!isGuest && (
+            <Pressable
+              hitSlop={8}
+              onPress={() => router.push("/saved")}
+              accessibilityRole="button"
+              accessibilityLabel="Open trip history"
+            >
+              <Text style={styles.seeAll}>See all</Text>
+            </Pressable>
+          )}
         </View>
 
-        {bookmarkPreview.length === 0 ? (
+        {isGuest ? (
+          <View style={styles.guestBookmarkPrompt}>
+            <Ionicons name="bookmark-outline" size={24} color="#64748b" />
+            <Text style={styles.guestBookmarkPromptText}>
+              Sign in to save and access bookmarked routes across your devices.
+            </Text>
+            <Pressable
+              style={styles.guestBookmarkSignInBtn}
+              onPress={() => router.push("/welcome")}
+            >
+              <Text style={styles.guestBookmarkSignInText}>Sign In</Text>
+            </Pressable>
+          </View>
+        ) : bookmarkPreview.length === 0 ? (
           <Text style={styles.recentEmpty}>
             Bookmarked routes will appear here after you save a route from
             Search.
@@ -296,6 +365,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingTop: 22,
   },
+  quickChannelsRow: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  quickChannelCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  quickChannelIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  quickChannelTextWrap: { flex: 1 },
+  quickChannelTitle: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
+  quickChannelSub: { fontSize: 11, color: "#64748b", marginTop: 1 },
   mapSectionHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -404,5 +502,57 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 15,
     fontWeight: "700",
+  },
+  greetingRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+  },
+  greetingTextWrap: {
+    flex: 1,
+  },
+  guestSignInBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(255, 255, 255, 0.22)",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.35)",
+    marginTop: 4,
+  },
+  guestSignInBadgeText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  guestBookmarkPrompt: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    padding: 18,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  guestBookmarkPromptText: {
+    color: "#64748b",
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+    marginTop: 8,
+    marginBottom: 14,
+  },
+  guestBookmarkSignInBtn: {
+    backgroundColor: GREEN,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  guestBookmarkSignInText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

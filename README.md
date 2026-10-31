@@ -1,8 +1,8 @@
-# TARA
+# TARA-neta
 
-TARA (Travel and Ride Anywhere) is a location-aware transportation app designed to help commuters navigate the city more easily, especially in places where public transportation is still heavily dependent on informal but widely used systems such as jeepneys.
+**TARA-neta** (derived from *TARA: Travel and Ride Anywhere*) is a location-aware public transportation navigation app customized to guide commuters directly to **De La Salle Araneta University (DLSAU)**. While originally envisioned as a general commuter platform, this iteration is specifically scoped to master travel and transit connections to DLSAU, accommodating real-world local transport realities like jeepneys, buses, and tricycles.
 
-The app is built to act like a smarter travel companion, similar in spirit to Google Maps or Waze, but with a stronger focus on public transport guidance. Instead of only showing the fastest route, TARA helps users understand what public transportation they should take, where to transfer, how much it might cost, and which options are most practical based on comfort, affordability, and travel time.
+The app is built to act like a smarter travel companion, similar in spirit to Google Maps or Waze, but with a stronger focus on local public transit guidance: what vehicle to board, placards or colors to look for, alighting phrases to tell drivers, where to transfer, and how much fares will cost.
 
 ## Project vision
 

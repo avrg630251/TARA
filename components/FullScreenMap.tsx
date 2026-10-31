@@ -1,11 +1,12 @@
-import { type ElementRef, useCallback, useEffect, useMemo, useRef } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { type ElementRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import MapView, {
   Marker,
   Polyline,
   type Region,
 } from "react-native-maps";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import * as Location from "expo-location";
 
 import type { LatLng } from "@/lib/googleMapsRoutes";
 import type { DisplayRouteSegment } from "@/lib/transitPlanOptions";
@@ -24,6 +25,7 @@ export type RouteSegmentPolyline = DisplayRouteSegment;
 type FullScreenMapProps = {
   latitude: number;
   longitude: number;
+  heading?: number | null;
   /** Single-path mode (backward compatible). */
   polylineCoordinates?: LatLng[];
   /** Multiple paths — Google Maps-style alternates on one map. */
@@ -118,7 +120,7 @@ function generateAndroidMapHtml() {
 <div id="map"></div>
 <script>
   var map = null;
-  var trackedMarker = null;
+  var userLocationOverlay = null;
   var destinationMarker = null;
   var polylines = [];
   var comparisonOverlays = [];
@@ -243,6 +245,91 @@ function generateAndroidMapHtml() {
     return overlay;
   }
 
+  function createUserLocationOverlay(mapInstance, initialPos) {
+    var overlay = new google.maps.OverlayView();
+    var currentPos = initialPos;
+    var currentHeading = null;
+    var div = null;
+    var coneDiv = null;
+
+    overlay.onAdd = function() {
+      div = document.createElement("div");
+      div.style.position = "absolute";
+      div.style.width = "120px";
+      div.style.height = "120px";
+      div.style.pointerEvents = "none";
+      div.style.zIndex = "1000";
+      div.style.transform = "translate(-50%, -50%)";
+      div.style.display = "flex";
+      div.style.alignItems = "center";
+      div.style.justifyContent = "center";
+
+      div.innerHTML =
+        '<div class="user-cone-wrap" style="position:absolute;width:120px;height:120px;pointer-events:none;transform-origin:50% 50%;display:' +
+        (currentHeading != null ? 'block' : 'none') +
+        ';transform:rotate(' + (currentHeading || 0) + 'deg);transition:transform 0.15s ease-out;">' +
+        '<svg width="120" height="120" viewBox="0 0 120 120" style="overflow:visible;">' +
+        '<defs>' +
+        '<radialGradient id="userConeGrad" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">' +
+        '<stop offset="0%" stop-color="#1a73e8" stop-opacity="0.65" />' +
+        '<stop offset="40%" stop-color="#3b82f6" stop-opacity="0.32" />' +
+        '<stop offset="80%" stop-color="#60a5fa" stop-opacity="0.10" />' +
+        '<stop offset="100%" stop-color="#93c5fd" stop-opacity="0" />' +
+        '</radialGradient>' +
+        '</defs>' +
+        '<path d="M 60 60 L 32.5 12.37 A 55 55 0 0 1 87.5 12.37 Z" fill="url(#userConeGrad)" />' +
+        '</svg>' +
+        '</div>' +
+        '<div style="position:absolute;width:28px;height:28px;border-radius:50%;background:rgba(26,115,232,0.22);"></div>' +
+        '<div style="position:absolute;width:18px;height:18px;border-radius:50%;background:#ffffff;box-shadow:0 1px 4px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;">' +
+        '<div style="width:12px;height:12px;border-radius:50%;background:#1a73e8;"></div>' +
+        '</div>';
+
+      coneDiv = div.querySelector(".user-cone-wrap");
+
+      var panes = overlay.getPanes();
+      if (panes && panes.overlayMouseTarget) {
+        panes.overlayMouseTarget.appendChild(div);
+      }
+    };
+
+    overlay.draw = function() {
+      if (!div) return;
+      var proj = overlay.getProjection();
+      if (!proj) return;
+      var pt = proj.fromLatLngToDivPixel(new google.maps.LatLng(currentPos.latitude, currentPos.longitude));
+      if (pt) {
+        div.style.left = Math.round(pt.x) + "px";
+        div.style.top = Math.round(pt.y) + "px";
+      }
+    };
+
+    overlay.onRemove = function() {
+      if (div && div.parentNode) {
+        div.parentNode.removeChild(div);
+        div = null;
+        coneDiv = null;
+      }
+    };
+
+    overlay.update = function(newPos, newHeading) {
+      currentPos = newPos;
+      currentHeading = newHeading;
+      if (coneDiv) {
+        if (newHeading != null && !isNaN(newHeading)) {
+          coneDiv.style.display = "block";
+          coneDiv.style.transform = "rotate(" + newHeading + "deg)";
+        } else {
+          coneDiv.style.display = "none";
+        }
+      }
+      overlay.draw();
+    };
+
+    overlay.setMap(mapInstance);
+    return overlay;
+  }
+
   function segmentColor(segment, idx) {
     if (segment.segmentType === "walk") return "#6B7280";
     if (segment.segmentType === "tricycle") return "#D97706";
@@ -260,20 +347,6 @@ function generateAndroidMapHtml() {
         disableDefaultUI: true,
         clickableIcons: false,
         gestureHandling: "greedy"
-      });
-
-      trackedMarker = new google.maps.Marker({
-        map: null,
-        title: "Your location",
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 8,
-          fillColor: "#1a73e8",
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 3
-        },
-        zIndex: 1000
       });
 
       destinationMarker = new google.maps.Marker({
@@ -304,18 +377,19 @@ function generateAndroidMapHtml() {
     }
 
     var tracked = data.trackedCoordinate || (data.navigationMode ? null : data.center);
+    var heading = (data.heading != null && !isNaN(data.heading)) ? Number(data.heading) : null;
     if (tracked && Number.isFinite(tracked.latitude) && Number.isFinite(tracked.longitude)) {
-      var pos = point(tracked);
-      trackedMarker.setPosition(pos);
-      if (!trackedMarker.getMap()) {
-        trackedMarker.setMap(map);
+      if (!userLocationOverlay) {
+        userLocationOverlay = createUserLocationOverlay(map, tracked);
       }
+      userLocationOverlay.update(tracked, heading);
       if (data.navigationMode) {
-        map.panTo(pos);
+        map.panTo(point(tracked));
         map.setZoom(16);
       }
-    } else {
-      trackedMarker.setMap(null);
+    } else if (userLocationOverlay) {
+      userLocationOverlay.setMap(null);
+      userLocationOverlay = null;
     }
 
     if (data.destinationCoordinate && Number.isFinite(data.destinationCoordinate.latitude) && Number.isFinite(data.destinationCoordinate.longitude)) {
@@ -490,6 +564,7 @@ function collectCoordinates(
 export function FullScreenMap({
   latitude,
   longitude,
+  heading,
   polylineCoordinates,
   routeAlternatives,
   routeSegments,
@@ -504,6 +579,54 @@ export function FullScreenMap({
   fitEdgePadding = DEFAULT_PADDING,
 }: FullScreenMapProps) {
   const mapRef = useRef<MapView>(null);
+  const [deviceHeading, setDeviceHeading] = useState<number | null>(null);
+
+  useEffect(() => {
+    let sub: Location.LocationSubscription | null = null;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== "granted" || cancelled) return;
+
+        sub = await Location.watchHeadingAsync((headingData) => {
+          if (cancelled) return;
+          const h =
+            headingData.trueHeading >= 0
+              ? headingData.trueHeading
+              : headingData.magHeading >= 0
+                ? headingData.magHeading
+                : null;
+          if (h != null && !Number.isNaN(h)) {
+            setDeviceHeading(Math.round(h));
+          }
+        });
+      } catch {
+        // Silently ignore if device lacks magnetometer
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (sub) {
+        try {
+          sub.remove();
+        } catch {}
+      }
+    };
+  }, []);
+
+  const effectiveHeading =
+    heading !== undefined && heading !== null ? heading : deviceHeading;
+
+  const userLocationCoord =
+    trackedCoordinate ??
+    (navigationMode
+      ? null
+      : Number.isFinite(latitude) && Number.isFinite(longitude)
+        ? { latitude, longitude }
+        : null);
 
   const region: Region = useMemo(
     () => ({
@@ -587,6 +710,7 @@ export function FullScreenMap({
       fitSignal,
       routeRenderKey,
       fitEdgePadding,
+      heading: effectiveHeading,
     };
     sendDataToWebView(payload);
   }, [
@@ -603,6 +727,7 @@ export function FullScreenMap({
     fitSignal,
     routeRenderKey,
     fitEdgePadding,
+    effectiveHeading,
     sendDataToWebView,
   ]);
 
@@ -669,7 +794,7 @@ export function FullScreenMap({
       ref={mapRef}
       style={StyleSheet.absoluteFill}
       initialRegion={region}
-      showsUserLocation
+      showsUserLocation={false}
       showsMyLocationButton={!navigationMode}
       loadingEnabled
       loadingIndicatorColor="#1B4332"
@@ -767,9 +892,78 @@ export function FullScreenMap({
           pinColor="#c92a2a"
         />
       ) : null}
+      {userLocationCoord ? (
+        <Marker
+          coordinate={userLocationCoord}
+          anchor={{ x: 0.5, y: 0.5 }}
+          flat
+          tracksViewChanges={true}
+          zIndex={1000}
+        >
+          <View style={userLocationStyles.container} pointerEvents="none">
+            {effectiveHeading != null ? (
+              <Image
+                source={require("@/assets/images/heading-cone.png")}
+                style={[
+                  userLocationStyles.cone,
+                  {
+                    transform: [{ rotate: `${effectiveHeading}deg` }],
+                  },
+                ]}
+                resizeMode="contain"
+              />
+            ) : null}
+            <View style={userLocationStyles.pulseRing} />
+            <View style={userLocationStyles.outerDot}>
+              <View style={userLocationStyles.innerDot} />
+            </View>
+          </View>
+        </Marker>
+      ) : null}
     </MapView>
   );
 }
+
+const userLocationStyles = StyleSheet.create({
+  container: {
+    width: 120,
+    height: 120,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cone: {
+    position: "absolute",
+    width: 120,
+    height: 120,
+  },
+  pulseRing: {
+    position: "absolute",
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(26, 115, 232, 0.22)",
+  },
+  outerDot: {
+    position: "absolute",
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 4,
+  },
+  innerDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#1a73e8",
+  },
+});
 
 const comparisonBubbleStyles = StyleSheet.create({
   bubble: {

@@ -18,6 +18,7 @@ export type RouteSegmentPolyline = DisplayRouteSegment;
 type FullScreenMapProps = {
   latitude: number;
   longitude: number;
+  heading?: number | null;
   polylineCoordinates?: LatLng[];
   routeAlternatives?: RouteAlternativePolyline[];
   routeSegments?: RouteSegmentPolyline[];

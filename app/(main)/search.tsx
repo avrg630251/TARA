@@ -393,7 +393,7 @@ function pickSearchParam(value: string | string[] | undefined): string | undefin
 
 export default function SearchMapScreen() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, isGuest } = useAuth();
   const params = useLocalSearchParams<{ origin?: string; destination?: string }>();
   const { isBookmarked, toggleBookmark, addRecentFromTrip } = useTravel();
   const insets = useSafeAreaInsets();
@@ -468,6 +468,7 @@ export default function SearchMapScreen() {
   const [tripDetailsExpanded, setTripDetailsExpanded] = useState(false);
   const [navLatitude, setNavLatitude] = useState(latitude);
   const [navLongitude, setNavLongitude] = useState(longitude);
+  const [navHeading, setNavHeading] = useState<number | null>(null);
   const [accessPath, setAccessPath] = useState<LatLng[] | null>(null);
   const [accessDurationMinutes, setAccessDurationMinutes] = useState<
     number | null
@@ -1190,6 +1191,7 @@ export default function SearchMapScreen() {
     tripProgressRef.current = { segmentIndex: 0, coordinateIndex: 0 };
     setTripActivePlan(null);
     setTripAlertBanner(null);
+    setNavHeading(null);
   }, [
     addRecentFromTrip,
     destination,
@@ -1332,6 +1334,9 @@ export default function SearchMapScreen() {
           if (cancelled) return;
           setNavLatitude(loc.coords.latitude);
           setNavLongitude(loc.coords.longitude);
+          if (typeof loc.coords.heading === "number" && loc.coords.heading >= 0) {
+            setNavHeading(loc.coords.heading);
+          }
         }
       );
       if (cancelled) {
@@ -1793,6 +1798,7 @@ export default function SearchMapScreen() {
         key={`route-map-${tripActivePlan?.id ?? selectedMapPlan?.id ?? "empty"}-${hasManuallySelectedRoute ? "selected" : "all"}`}
         latitude={tripActivePlan ? navLatitude : latitude}
         longitude={tripActivePlan ? navLongitude : longitude}
+        heading={tripActivePlan ? navHeading : undefined}
         polylineCoordinates={
           tripActivePlan
             ? undefined
@@ -2468,6 +2474,20 @@ export default function SearchMapScreen() {
                         saved ? "Remove bookmark" : "Bookmark route"
                       }
                       onPress={() => {
+                        if (isGuest) {
+                          Alert.alert(
+                            "Sign In Required",
+                            "Saving and bookmarking routes is only available for registered accounts. Please sign in or create an account.",
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              {
+                                text: "Sign In",
+                                onPress: () => router.push("/welcome"),
+                              },
+                            ]
+                          );
+                          return;
+                        }
                         if (!destLabel) {
                           Alert.alert(
                             "Destination needed",

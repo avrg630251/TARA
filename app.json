@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "TARA",
-    "slug": "TARA",
+    "name": "TARA-neta",
+    "slug": "TARA-neta",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.tara.taraapp",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "TARA uses your location to show your position on the map preview."
+        "NSLocationWhenInUseUsageDescription": "TARA-neta uses your location to show your position on the map preview."
       }
     },
     "android": {

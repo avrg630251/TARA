@@ -1,4 +1,4 @@
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import * as Linking from "expo-linking";
 import { useState } from "react";
 import {
@@ -13,6 +13,7 @@ import {
 
 import { AuthScreen } from "@/components/AuthScreen";
 import { PasswordField } from "@/components/PasswordField";
+import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 
 function getEmailRedirectUrl(): string {
@@ -23,6 +24,8 @@ function getEmailRedirectUrl(): string {
 }
 
 export default function SignupScreen() {
+  const router = useRouter();
+  const { loginAsGuest } = useAuth();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -55,6 +58,7 @@ export default function SignupScreen() {
       options: {
         data: {
           full_name: fullName.trim(),
+          role: "user",
         },
         emailRedirectTo: getEmailRedirectUrl(),
       },
@@ -64,6 +68,21 @@ export default function SignupScreen() {
     if (signUpError) {
       setError(signUpError.message);
       return;
+    }
+
+    if (data.user) {
+      try {
+        await supabase.from("profiles").upsert({
+          id: data.user.id,
+          email: trimmedEmail,
+          role: "user",
+          full_name: fullName.trim(),
+          school_name: "De La Salle Araneta University",
+          department_or_program: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      } catch {}
     }
 
     if (data.session) {
@@ -79,7 +98,7 @@ export default function SignupScreen() {
   return (
     <AuthScreen>
       <View style={styles.page}>
-        <Text style={styles.brand}>TARA!</Text>
+        <Text style={styles.brand}>TARA-neta</Text>
         <Text style={styles.title}>Sign Up</Text>
 
         <View style={styles.card}>
@@ -153,6 +172,19 @@ export default function SignupScreen() {
               </Pressable>
             </Link>
           </View>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.guestBtn,
+              pressed && { opacity: 0.7 },
+            ]}
+            onPress={async () => {
+              await loginAsGuest();
+              router.replace("/(main)");
+            }}
+          >
+            <Text style={styles.guestBtnText}>Skip login · Continue as Guest</Text>
+          </Pressable>
         </View>
       </View>
     </AuthScreen>
@@ -206,6 +238,32 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     marginBottom: 16,
   },
+  rolePickerGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+  roleChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  roleChipSelected: {
+    backgroundColor: "#1C5141",
+    borderColor: "#1C5141",
+  },
+  roleChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  roleChipTextSelected: {
+    color: "#ffffff",
+  },
   error: {
     color: "#dc2626",
     fontSize: 14,
@@ -250,6 +308,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#1C5141",
+    textDecorationLine: "underline",
+  },
+  guestBtn: {
+    marginTop: 14,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  guestBtnText: {
+    color: "#64748b",
+    fontSize: 14,
+    fontWeight: "600",
     textDecorationLine: "underline",
   },
 });

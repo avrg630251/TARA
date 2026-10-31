@@ -1,44 +1,181 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Session } from "@supabase/supabase-js";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
 
+import type { UserRole } from "@/lib/adminAndFeedback";
 import { supabase } from "@/lib/supabase";
+
+const GUEST_STORAGE_KEY = "tara:guest_mode_active";
 
 type AuthContextValue = {
   session: Session | null;
   loading: boolean;
+  userRole: UserRole;
+  isAdmin: boolean;
+  isGuest: boolean;
+  loginAsGuest: () => Promise<void>;
+  logoutGuest: () => Promise<void>;
+  setUserRole: (role: UserRole) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue>({
   session: null,
   loading: true,
+  userRole: "user",
+  isAdmin: false,
+  isGuest: false,
+  loginAsGuest: async () => {},
+  logoutGuest: async () => {},
+  setUserRole: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userRole, setUserRoleState] = useState<UserRole>("user");
+  const [isGuest, setIsGuestState] = useState(false);
+
+  const syncRoleFromSession = useCallback(async (currentSession: Session | null) => {
+    if (!currentSession?.user) {
+      const guestActive = await AsyncStorage.getItem(GUEST_STORAGE_KEY);
+      if (guestActive === "true") {
+        setIsGuestState(true);
+        setUserRoleState("guest");
+      } else {
+        setIsGuestState(false);
+        setUserRoleState("guest");
+      }
+      return;
+    }
+
+    // Authenticated user exists -> not in guest mode
+    setIsGuestState(false);
+    await AsyncStorage.removeItem(GUEST_STORAGE_KEY).catch(() => {});
+
+    const userEmail = currentSession.user.email?.toLowerCase().trim();
+    const initialAdminEmail = process.env.EXPO_PUBLIC_INITIAL_ADMIN_EMAIL?.toLowerCase().trim();
+
+    // 1. Check if user matches designated initial admin email from env
+    if (initialAdminEmail && userEmail === initialAdminEmail) {
+      setUserRoleState("admin");
+      await AsyncStorage.setItem(`tara:user:role:${currentSession.user.id}`, "admin").catch(() => {});
+      return;
+    }
+
+    // 2. Query Supabase profiles table for live role assignment
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", currentSession.user.id)
+        .maybeSingle();
+
+      if (profile?.role === "admin" || profile?.role === "user" || profile?.role === "guest") {
+        setUserRoleState(profile.role);
+        await AsyncStorage.setItem(`tara:user:role:${currentSession.user.id}`, profile.role).catch(() => {});
+        return;
+      } else if (!profile && currentSession.user.id) {
+        // Ensure profile record exists in public.profiles so administrator can manage it
+        await supabase.from("profiles").upsert({
+          id: currentSession.user.id,
+          email: currentSession.user.email,
+          role: "user",
+          full_name: currentSession.user.user_metadata?.full_name || currentSession.user.email?.split("@")[0] || "Registered User",
+          created_at: currentSession.user.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch {}
+
+    // 3. Fallback to local cached role or user metadata
+    const metaRole = currentSession.user.user_metadata?.role as string | undefined;
+    const localRole = await AsyncStorage.getItem(`tara:user:role:${currentSession.user.id}`);
+
+    if (localRole === "admin" || localRole === "guest" || localRole === "user") {
+      setUserRoleState(localRole);
+    } else if (metaRole === "admin" || metaRole === "university_admin") {
+      setUserRoleState("admin");
+    } else if (metaRole === "guest") {
+      setUserRoleState("guest");
+    } else {
+      setUserRoleState("user");
+    }
+  }, []);
 
   useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
+      void syncRoleFromSession(s);
       setLoading(false);
     });
 
     return () => subscription.unsubscribe();
+  }, [syncRoleFromSession]);
+
+  const loginAsGuest = useCallback(async () => {
+    await AsyncStorage.setItem(GUEST_STORAGE_KEY, "true").catch(() => {});
+    setIsGuestState(true);
+    setUserRoleState("guest");
   }, []);
 
-  return (
-    <AuthContext.Provider value={{ session, loading }}>
-      {children}
-    </AuthContext.Provider>
+  const logoutGuest = useCallback(async () => {
+    await AsyncStorage.removeItem(GUEST_STORAGE_KEY).catch(() => {});
+    setIsGuestState(false);
+    setUserRoleState("user");
+  }, []);
+
+  const setUserRole = useCallback(
+    async (role: UserRole) => {
+      setUserRoleState(role);
+      if (role === "guest") {
+        setIsGuestState(true);
+        await AsyncStorage.setItem(GUEST_STORAGE_KEY, "true").catch(() => {});
+      } else {
+        setIsGuestState(false);
+        await AsyncStorage.removeItem(GUEST_STORAGE_KEY).catch(() => {});
+      }
+
+      if (session?.user) {
+        await AsyncStorage.setItem(`tara:user:role:${session.user.id}`, role).catch(() => {});
+        try {
+          await supabase.auth.updateUser({
+            data: { role },
+          });
+        } catch {
+          // Keep local assignment if offline
+        }
+      }
+    },
+    [session?.user]
   );
+
+  const isAdmin = useMemo(() => userRole === "admin", [userRole]);
+
+  const value = useMemo(
+    () => ({
+      session,
+      loading,
+      userRole,
+      isAdmin,
+      isGuest,
+      loginAsGuest,
+      logoutGuest,
+      setUserRole,
+    }),
+    [session, loading, userRole, isAdmin, isGuest, loginAsGuest, logoutGuest, setUserRole]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
