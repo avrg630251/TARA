@@ -677,10 +677,10 @@ export default function AdminScreen() {
                           <Text style={styles.userAvatarLetter}>{u.fullName.charAt(0) || "U"}</Text>
                         </View>
                         <View style={styles.userInfo}>
-                          <Text style={styles.userName}>{u.fullName}</Text>
-                          <Text style={styles.userEmail}>{u.email}</Text>
+                          <Text style={styles.userName} numberOfLines={1}>{u.fullName}</Text>
+                          <Text style={styles.userEmail} numberOfLines={1} ellipsizeMode="tail">{u.email}</Text>
                           {u.departmentOrProgram && u.departmentOrProgram !== "Registered Student" ? (
-                            <Text style={styles.userDept}>{u.departmentOrProgram}</Text>
+                            <Text style={styles.userDept} numberOfLines={1}>{u.departmentOrProgram}</Text>
                           ) : null}
                         </View>
                         <Pressable
@@ -1348,20 +1348,21 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   userAvatarLetter: { fontSize: 16, fontWeight: "700", color: "#0369a1" },
-  userInfo: { flex: 1 },
-  userName: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
+  userInfo: { flex: 1, marginRight: 8 },
+  userName: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
   userEmail: { fontSize: 12, color: "#64748b" },
   userDept: { fontSize: 11, color: GREEN, marginTop: 2 },
   changeRoleBtn: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: GREEN,
+    flexShrink: 0,
   },
-  changeRoleBtnText: { fontSize: 12, fontWeight: "700", color: GREEN },
+  changeRoleBtnText: { fontSize: 11, fontWeight: "700", color: GREEN },
   userCardBottom: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1390,15 +1391,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#ecfdf5",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
-  routeTitleWrap: { flex: 1 },
-  routeName: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
+  routeTitleWrap: { flex: 1, marginRight: 6 },
+  routeName: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
   routeFromTo: { fontSize: 12, color: "#64748b", marginTop: 1 },
   statusChangeBtn: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: "#f1f5f9",
     borderRadius: 8,
+    flexShrink: 0,
   },
   statusChangeBtnText: { fontSize: 12, fontWeight: "700", color: "#1e293b" },
   routeMetaRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },

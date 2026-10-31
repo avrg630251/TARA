@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs, useRouter } from "expo-router";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 import { useEffect } from "react";
 
 import { useAuth } from "@/contexts/AuthContext";
@@ -41,11 +41,14 @@ export default function MainLayout() {
           headerShown: false,
           tabBarActiveTintColor: GREEN,
           tabBarInactiveTintColor: "#868e96",
-          tabBarLabelStyle: { fontSize: 11 },
+          tabBarLabelStyle: { fontSize: 10, fontWeight: "600" },
           tabBarStyle: {
             borderTopWidth: 1,
             borderTopColor: "#e9ecef",
             backgroundColor: "#fff",
+            height: Platform.OS === "ios" ? 82 : 60,
+            paddingTop: 6,
+            paddingBottom: Platform.OS === "ios" ? 22 : 6,
           },
         }}
       >
@@ -53,8 +56,8 @@ export default function MainLayout() {
           name="index"
           options={{
             title: "Home",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="home" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
+            tabBarIcon: ({ color }) => (
+              <Ionicons name="home" size={20} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />
@@ -62,8 +65,8 @@ export default function MainLayout() {
           name="search"
           options={{
             title: "Search",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="compass-outline" size={size ?? 24} color={typeof color === "number" ? GREEN : color ?? GREEN} />
+            tabBarIcon: ({ color }) => (
+              <Ionicons name="compass-outline" size={21} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />
@@ -72,8 +75,8 @@ export default function MainLayout() {
           options={{
             title: "History",
             href: isGuest ? null : undefined,
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="time-outline" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
+            tabBarIcon: ({ color }) => (
+              <Ionicons name="time-outline" size={20} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />
@@ -82,8 +85,8 @@ export default function MainLayout() {
           options={{
             title: "Schedule",
             href: isGuest ? null : undefined,
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="calendar-outline" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
+            tabBarIcon: ({ color }) => (
+              <Ionicons name="calendar-outline" size={20} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />
@@ -92,8 +95,8 @@ export default function MainLayout() {
           options={{
             title: "Profile",
             href: isGuest ? null : undefined,
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="person-outline" size={size ?? 24} color={typeof color === "number" ? GREEN : color ?? GREEN} />
+            tabBarIcon: ({ color }) => (
+              <Ionicons name="person-outline" size={21} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />
@@ -102,8 +105,8 @@ export default function MainLayout() {
           options={{
             title: "Admin",
             href: isAdmin ? ("/(main)/admin" as any) : null,
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="shield-checkmark-outline" size={size ?? 22} color={typeof color === "number" ? GREEN : color ?? GREEN} />
+            tabBarIcon: ({ color }) => (
+              <Ionicons name="shield-checkmark-outline" size={20} color={typeof color === "number" ? GREEN : color ?? GREEN} />
             ),
           }}
         />

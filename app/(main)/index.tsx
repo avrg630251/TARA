@@ -61,7 +61,7 @@ export default function HomeScreen() {
   const { width: windowWidth } = useWindowDimensions();
   const { bookmarks } = useTravel();
   const bookmarkPreview = useMemo(() => bookmarks.slice(0, 6), [bookmarks]);
-  const cardWidth = Math.min(320, Math.max(260, windowWidth * 0.78));
+  const cardWidth = Math.min(320, Math.max(250, windowWidth * 0.76));
 
   const [latitude, setLatitude] = useState(FALLBACK_LAT);
   const [longitude, setLongitude] = useState(FALLBACK_LNG);
@@ -201,7 +201,11 @@ export default function HomeScreen() {
           ) : null}
         </View>
 
-        <MapPreview latitude={latitude} longitude={longitude} height={220} />
+        <MapPreview
+          latitude={latitude}
+          longitude={longitude}
+          height={windowWidth < 400 ? 185 : 215}
+        />
 
         {locationStatus === "fallback" ? (
           <Text style={styles.locationHint}>
@@ -321,28 +325,28 @@ const styles = StyleSheet.create({
     backgroundColor: GREEN,
   },
   headerInner: {
-    paddingHorizontal: 22,
+    paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 24,
+    paddingBottom: 18,
   },
   greeting: {
-    fontSize: 30,
+    fontSize: 26,
     fontWeight: "700",
     color: "#fff",
     marginBottom: 4,
   },
   tagline: {
-    fontSize: 16,
+    fontSize: 14,
     color: "rgba(255,255,255,0.92)",
-    marginBottom: 18,
+    marginBottom: 14,
   },
   searchRow: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: SEARCH_BG,
     borderRadius: 999,
-    paddingHorizontal: 18,
-    paddingVertical: 13,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
     gap: 10,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -355,15 +359,15 @@ const styles = StyleSheet.create({
   },
   searchPlaceholder: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 15,
     color: "#6c757d",
   },
   scroll: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 22,
-    paddingTop: 22,
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
   quickChannelsRow: {
     gap: 10,
@@ -415,32 +419,32 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 26,
-    marginBottom: 14,
+    marginTop: 20,
+    marginBottom: 12,
   },
   recentTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "700",
     color: GREEN_HEADING,
   },
   seeAll: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
     color: "#40916c",
   },
   recentEmpty: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#868e96",
-    lineHeight: 20,
+    lineHeight: 19,
   },
   recentCarousel: {
-    gap: 14,
-    paddingRight: 22,
+    gap: 12,
+    paddingRight: 16,
   },
   routeCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
     borderColor: "#e9ecef",
     shadowColor: "#000",
