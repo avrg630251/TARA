@@ -5,14 +5,18 @@ import { useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function Index() {
-  const { session, loading, isGuest } = useAuth();
+  const { session, loading, isGuest, isPasswordRecovery } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading) {
-      router.replace(session || isGuest ? "/(main)" : "/welcome");
+      if (isPasswordRecovery && session) {
+        router.replace("/auth/reset-password" as any);
+      } else {
+        router.replace(session || isGuest ? "/(main)" : "/welcome");
+      }
     }
-  }, [loading, router, session, isGuest]);
+  }, [loading, router, session, isGuest, isPasswordRecovery]);
 
   return (
     <View style={styles.centered}>

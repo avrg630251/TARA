@@ -41,6 +41,7 @@ import {
   type RouteAvailabilityStatus,
   type UserRole,
 } from "@/lib/adminAndFeedback";
+import { getRouteSafetySummary, subscribeToSafetyChanges } from "@/lib/routeSafety";
 
 const GREEN = "#1C5141";
 
@@ -80,6 +81,15 @@ export default function AdminScreen() {
   const [triageStatus, setTriageStatus] = useState<CommuterReport["status"]>("verified");
 
   const [userFilter, setUserFilter] = useState<string>("all");
+  const [, setSafetyTick] = useState(0);
+
+  // Subscribe to route safety changes so Admin routes update live when users score a route
+  useEffect(() => {
+    const unsub = subscribeToSafetyChanges(() => {
+      setSafetyTick((c) => c + 1);
+    });
+    return unsub;
+  }, []);
 
   const loadAllData = useCallback(async () => {
     setLoading(true);
@@ -538,6 +548,14 @@ export default function AdminScreen() {
           <Text style={styles.headerSub}>DLSAU Transit & User Accounts Management Desk</Text>
         </View>
         <Pressable
+          onPress={() => router.push("/guide" as any)}
+          style={styles.refreshBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Open Admin Guide"
+        >
+          <Ionicons name="book-outline" size={20} color={GREEN} />
+        </Pressable>
+        <Pressable
           onPress={async () => {
             setRefreshing(true);
             try {
@@ -774,6 +792,17 @@ export default function AdminScreen() {
                           </Text>
                         </View>
                         <Text style={styles.routeFare}>Est. Fare: {r.fareText}</Text>
+                        {(() => {
+                          const s = getRouteSafetySummary(r.routeName, r.routeId);
+                          return (
+                            <View style={styles.adminSafetyBadge}>
+                              <Ionicons name="shield-checkmark" size={12} color="#047857" />
+                              <Text style={styles.adminSafetyBadgeText}>
+                                Safety: ★ {s.averageRating.toFixed(1)} ({s.ratingCount})
+                              </Text>
+                            </View>
+                          );
+                        })()}
                       </View>
 
                       {r.statusNotice ? (
@@ -1408,6 +1437,23 @@ const styles = StyleSheet.create({
   routeStatusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   routeStatusText: { fontSize: 11, fontWeight: "800" },
   routeFare: { fontSize: 12, color: "#475569", fontWeight: "600" },
+  adminSafetyBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+    marginLeft: "auto",
+  },
+  adminSafetyBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#047857",
+  },
   noticeBox: {
     flexDirection: "row",
     alignItems: "center",

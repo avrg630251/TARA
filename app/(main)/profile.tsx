@@ -60,7 +60,7 @@ function schoolFromUser(user: User | undefined) {
 }
 
 export default function ProfileScreen() {
-  const { session, userRole, isAdmin, setUserRole, isGuest } = useAuth();
+  const { session, userRole, isAdmin, setUserRole, isGuest, logoutGuest, signOut: authSignOut } = useAuth();
   const { bookmarks, recentTrips } = useTravel();
   const router = useRouter();
   const user = session?.user;
@@ -281,9 +281,14 @@ export default function ProfileScreen() {
   }
 
   async function signOut() {
+    if (signingOut) return;
     setSigningOut(true);
-    await supabase.auth.signOut();
-    setSigningOut(false);
+    try {
+      await authSignOut();
+      router.replace("/welcome");
+    } finally {
+      setSigningOut(false);
+    }
   }
 
   if (isGuest) {
@@ -300,9 +305,29 @@ export default function ProfileScreen() {
               styles.guestSignInBtn,
               pressed && { opacity: 0.85 },
             ]}
-            onPress={() => router.push("/welcome")}
+            onPress={async () => {
+              await logoutGuest();
+              router.replace("/welcome");
+            }}
           >
             <Text style={styles.guestSignInBtnText}>Sign In / Register</Text>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.guestAboutBtn,
+              pressed && { opacity: 0.85 },
+            ]}
+            onPress={() => {
+              void Linking.openURL("https://www.dlsau.edu.ph/about/university/index.html").catch(() =>
+                Alert.alert("Unable to open link", "Please visit https://www.dlsau.edu.ph/about/university/index.html")
+              );
+            }}
+            accessibilityRole="link"
+            accessibilityLabel="About DLSAU website"
+          >
+            <Ionicons name="school-outline" size={17} color={GREEN} />
+            <Text style={styles.guestAboutBtnText}>About DLSAU</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -377,8 +402,22 @@ export default function ProfileScreen() {
           <MenuRow icon="calendar-outline" label="Schedule" onPress={() => router.push("/(main)/schedule")} />
         </View>
 
-        <Text style={styles.sectionLabel}>Support</Text>
+        <Text style={styles.sectionLabel}>About & Support</Text>
         <View style={styles.menuCard}>
+          <MenuRow
+            icon="school-outline"
+            label="About DLSAU"
+            onPress={() => {
+              void Linking.openURL("https://www.dlsau.edu.ph/about/university/index.html").catch(() =>
+                Alert.alert("Unable to open link", "Please visit https://www.dlsau.edu.ph/about/university/index.html")
+              );
+            }}
+          />
+          <MenuRow
+            icon="book-outline"
+            label={isAdmin ? "Guide (Admin & Commuter)" : "Guide"}
+            onPress={() => router.push("/guide" as any)}
+          />
           <MenuRow icon="help-circle-outline" label="Help & Support" onPress={openSupport} />
         </View>
 
@@ -608,6 +647,24 @@ const styles = StyleSheet.create({
   guestSignInBtnText: {
     color: "#ffffff",
     fontSize: 15,
+    fontWeight: "700",
+  },
+  guestAboutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: GREEN,
+    backgroundColor: "#ecfdf5",
+  },
+  guestAboutBtnText: {
+    color: GREEN,
+    fontSize: 14,
     fontWeight: "700",
   },
 });

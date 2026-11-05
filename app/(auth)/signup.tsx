@@ -52,6 +52,24 @@ export default function SignupScreen() {
     }
 
     setSubmitting(true);
+
+    // 1. Pre-check if email is already registered in profiles
+    try {
+      const { data: existingProfile } = await supabase
+        .from("profiles")
+        .select("id")
+        .ilike("email", trimmedEmail)
+        .maybeSingle();
+
+      if (existingProfile) {
+        setSubmitting(false);
+        setError("User already registered");
+        return;
+      }
+    } catch {
+      // If table query is restricted, continue to auth.signUp
+    }
+
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: trimmedEmail,
       password,
@@ -66,7 +84,27 @@ export default function SignupScreen() {
     setSubmitting(false);
 
     if (signUpError) {
-      setError(signUpError.message);
+      const msg = signUpError.message.toLowerCase();
+      if (
+        msg.includes("already registered") ||
+        msg.includes("already been registered") ||
+        msg.includes("user already exists") ||
+        (signUpError.status === 400 && (msg.includes("user") || msg.includes("email")))
+      ) {
+        setError("User already registered");
+      } else {
+        setError(signUpError.message);
+      }
+      return;
+    }
+
+    // 2. Supabase GoTrue returns empty identities array when email is already registered
+    if (
+      data.user &&
+      Array.isArray(data.user.identities) &&
+      data.user.identities.length === 0
+    ) {
+      setError("User already registered");
       return;
     }
 

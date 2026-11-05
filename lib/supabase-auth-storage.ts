@@ -20,6 +20,17 @@ const webLocalStorage =
     ? localStorage
     : null;
 
+let storageQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueStorageOp<T>(fn: () => Promise<T>): Promise<T> {
+  const next = storageQueue.then(fn, fn);
+  storageQueue = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
+
 async function readAll(): Promise<Record<string, string>> {
   if (webLocalStorage) {
     try {
@@ -81,51 +92,88 @@ async function writeAll(store: Record<string, string>): Promise<void> {
  * AsyncStorage's native module is often null on Android (Expo Go + New Architecture, etc.).
  * expo-file-system is bundled with Expo and works reliably on device.
  */
-export const supabaseAuthStorage = {
-  getItem: async (key: string) => {
+export async function clearSupabaseAuthStorage(): Promise<void> {
+  return enqueueStorageOp(async () => {
     if (webLocalStorage) {
-      const direct = webLocalStorage.getItem(key);
-      if (direct) return direct;
-
-      // Migrate session from older bundled localStorage format.
       try {
-        const raw = webLocalStorage.getItem(WEB_STORAGE_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw) as unknown;
-        if (
-          parsed &&
-          typeof parsed === "object" &&
-          !Array.isArray(parsed) &&
-          Object.prototype.hasOwnProperty.call(parsed, key)
-        ) {
-          const value = (parsed as Record<string, string>)[key];
-          webLocalStorage.setItem(key, value);
-          return value;
+        webLocalStorage.removeItem(WEB_STORAGE_KEY);
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < webLocalStorage.length; i++) {
+          const k = webLocalStorage.key(i);
+          if (k && (k.startsWith("sb-") || k.includes("supabase.auth"))) {
+            keysToRemove.push(k);
+          }
+        }
+        for (const k of keysToRemove) {
+          webLocalStorage.removeItem(k);
         }
       } catch {
+        // Ignore web storage errors
+      }
+      return;
+    }
+
+    const uri = storeFileUri();
+    if (!uri) return;
+    try {
+      await deleteAsync(uri, { idempotent: true });
+    } catch {
+      // Ignore file deletion errors
+    }
+  });
+}
+
+export const supabaseAuthStorage = {
+  getItem: async (key: string) => {
+    return enqueueStorageOp(async () => {
+      if (webLocalStorage) {
+        const direct = webLocalStorage.getItem(key);
+        if (direct) return direct;
+
+        // Migrate session from older bundled localStorage format.
+        try {
+          const raw = webLocalStorage.getItem(WEB_STORAGE_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw) as unknown;
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            !Array.isArray(parsed) &&
+            Object.prototype.hasOwnProperty.call(parsed, key)
+          ) {
+            const value = (parsed as Record<string, string>)[key];
+            webLocalStorage.setItem(key, value);
+            return value;
+          }
+        } catch {
+          return null;
+        }
         return null;
       }
-      return null;
-    }
-    const all = await readAll();
-    return Object.prototype.hasOwnProperty.call(all, key) ? all[key] : null;
+      const all = await readAll();
+      return Object.prototype.hasOwnProperty.call(all, key) ? all[key] : null;
+    });
   },
   setItem: async (key: string, value: string) => {
-    if (webLocalStorage) {
-      webLocalStorage.setItem(key, value);
-      return;
-    }
-    const all = await readAll();
-    all[key] = value;
-    await writeAll(all);
+    return enqueueStorageOp(async () => {
+      if (webLocalStorage) {
+        webLocalStorage.setItem(key, value);
+        return;
+      }
+      const all = await readAll();
+      all[key] = value;
+      await writeAll(all);
+    });
   },
   removeItem: async (key: string) => {
-    if (webLocalStorage) {
-      webLocalStorage.removeItem(key);
-      return;
-    }
-    const all = await readAll();
-    delete all[key];
-    await writeAll(all);
+    return enqueueStorageOp(async () => {
+      if (webLocalStorage) {
+        webLocalStorage.removeItem(key);
+        return;
+      }
+      const all = await readAll();
+      delete all[key];
+      await writeAll(all);
+    });
   },
 };

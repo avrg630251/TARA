@@ -37,7 +37,7 @@ type DisplayHistoryItem = {
 
 export default function SavedScreen() {
   const router = useRouter();
-  const { isGuest } = useAuth();
+  const { isGuest, logoutGuest } = useAuth();
   const {
     ready,
     bookmarks,
@@ -73,7 +73,10 @@ export default function SavedScreen() {
               styles.guestSignInBtn,
               pressed && { opacity: 0.85 },
             ]}
-            onPress={() => router.push("/welcome")}
+            onPress={async () => {
+              await logoutGuest();
+              router.replace("/welcome");
+            }}
           >
             <Text style={styles.guestSignInBtnText}>Sign In / Register</Text>
           </Pressable>

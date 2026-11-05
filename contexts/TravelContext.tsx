@@ -79,7 +79,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
     setRecentTrips([]);
     recentTripsRef.current = [];
 
-    if (isGuest) {
+    if (isGuest || !userId) {
       setReady(true);
       return;
     }

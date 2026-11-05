@@ -4,6 +4,7 @@ import {
   Animated,
   Easing,
   Image,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -134,6 +135,20 @@ export default function WelcomeScreen() {
           >
             <Text style={styles.guestBtnText}>Skip Login · Continue as Guest</Text>
           </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.aboutLinkBtn,
+              pressed && { opacity: 0.7 },
+            ]}
+            onPress={() => {
+              void Linking.openURL("https://www.dlsau.edu.ph/about/university/index.html").catch(() => {});
+            }}
+            accessibilityRole="link"
+            accessibilityLabel="About DLSAU website"
+          >
+            <Text style={styles.aboutLinkText}>About DLSAU ↗</Text>
+          </Pressable>
         </Animated.View>
       </View>
     </SafeAreaView>
@@ -223,6 +238,18 @@ const styles = StyleSheet.create({
   guestBtnText: {
     color: "#64748b",
     fontSize: 14,
+    fontWeight: "600",
+  },
+  aboutLinkBtn: {
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  aboutLinkText: {
+    color: GREEN,
+    fontSize: 13,
     fontWeight: "600",
   },
 });

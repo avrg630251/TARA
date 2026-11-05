@@ -22,6 +22,11 @@ import { MapPreview } from "@/components/MapPreview";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
 import { normalizeTravelFare } from "@/lib/transitRoutes";
+import {
+  getRouteSafetySummary,
+  loadAllRouteSafetyRatings,
+  subscribeToSafetyChanges,
+} from "@/lib/routeSafety";
 
 const GREEN = "#1C5141";
 const GREEN_HEADING = "#1C5141";
@@ -55,7 +60,7 @@ function formatTripDate(iso: string) {
 }
 
 export default function HomeScreen() {
-  const { session, isGuest, isAdmin, setUserRole } = useAuth();
+  const { session, isGuest, isAdmin, logoutGuest } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
@@ -68,6 +73,15 @@ export default function HomeScreen() {
   const [locationStatus, setLocationStatus] = useState<
     "loading" | "ok" | "fallback"
   >("loading");
+  const [, setSafetyTick] = useState(0);
+
+  useEffect(() => {
+    void loadAllRouteSafetyRatings();
+    const unsub = subscribeToSafetyChanges(() => {
+      setSafetyTick((t) => t + 1);
+    });
+    return unsub;
+  }, []);
 
   const firstName = useMemo(() => {
     if (isGuest) return "Guest";
@@ -79,21 +93,58 @@ export default function HomeScreen() {
 
     (async () => {
       try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
+        // 1. Check if device location services are enabled
+        const isServicesEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
+        if (cancelled) return;
+        if (!isServicesEnabled) {
+          setLocationStatus("fallback");
+          return;
+        }
+
+        // 2. Request permission; if denied, fall back cleanly
+        const { status } = await Location.requestForegroundPermissionsAsync().catch(() => ({ status: "denied" }));
         if (cancelled) return;
         if (status !== "granted") {
           setLocationStatus("fallback");
           return;
         }
-        const pos = await Location.getCurrentPositionAsync({
+
+        // 3. Try getting last known position first (instant cache)
+        const lastKnown = await Location.getLastKnownPositionAsync().catch(() => null);
+        if (cancelled) return;
+        if (lastKnown?.coords) {
+          setLatitude(lastKnown.coords.latitude);
+          setLongitude(lastKnown.coords.longitude);
+          setLocationStatus("ok");
+        }
+
+        // 4. Fetch GPS position with 3-second timeout so it never hangs or freezes on loading
+        const locationPromise = Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
+        const timeoutPromise = new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), 3000)
+        );
+
+        const pos = await Promise.race([locationPromise, timeoutPromise]);
         if (cancelled) return;
-        setLatitude(pos.coords.latitude);
-        setLongitude(pos.coords.longitude);
-        setLocationStatus("ok");
+
+        if (pos?.coords) {
+          setLatitude(pos.coords.latitude);
+          setLongitude(pos.coords.longitude);
+          setLocationStatus("ok");
+        } else if (!lastKnown?.coords) {
+          // If GPS timed out and no cached position, display fallback Metro Manila map
+          setLatitude(FALLBACK_LAT);
+          setLongitude(FALLBACK_LNG);
+          setLocationStatus("fallback");
+        }
       } catch {
-        if (!cancelled) setLocationStatus("fallback");
+        if (!cancelled) {
+          setLatitude(FALLBACK_LAT);
+          setLongitude(FALLBACK_LNG);
+          setLocationStatus("fallback");
+        }
       }
     })();
 
@@ -127,7 +178,10 @@ export default function HomeScreen() {
                     styles.guestSignInBadge,
                     pressed && { opacity: 0.8 },
                   ]}
-                  onPress={() => router.push("/welcome")}
+                  onPress={async () => {
+                    await logoutGuest();
+                    router.replace("/welcome");
+                  }}
                 >
                   <Ionicons name="log-in-outline" size={15} color="#fff" />
                   <Text style={styles.guestSignInBadgeText}>Sign In</Text>
@@ -192,6 +246,28 @@ export default function HomeScreen() {
             </View>
             <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
           </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.quickChannelCard, pressed && { opacity: 0.88 }]}
+            onPress={() => router.push("/guide" as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Open system guide"
+          >
+            <View style={[styles.quickChannelIconWrap, { backgroundColor: "#dcfce7" }]}>
+              <Ionicons name="book" size={18} color="#166534" />
+            </View>
+            <View style={styles.quickChannelTextWrap}>
+              <Text style={styles.quickChannelTitle}>Guide</Text>
+              <Text style={styles.quickChannelSub}>
+                {isAdmin
+                  ? "Admin & commuter step-by-step guide"
+                  : isGuest
+                    ? "How to use TARA-neta as a Guest"
+                    : "How to use TARA-neta step by step"}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+          </Pressable>
         </View>
 
         <View style={styles.mapSectionHeader}>
@@ -205,13 +281,22 @@ export default function HomeScreen() {
           latitude={latitude}
           longitude={longitude}
           height={windowWidth < 400 ? 185 : 215}
+          showUserLocation={locationStatus === "ok"}
         />
 
         {locationStatus === "fallback" ? (
-          <Text style={styles.locationHint}>
-            Location off or unavailable — showing a default map area. Enable
-            location in settings to see where you are.
-          </Text>
+          <View style={styles.locationFallbackBox}>
+            <Ionicons
+              name="location-outline"
+              size={18}
+              color="#b45309"
+              style={{ marginTop: 1 }}
+            />
+            <Text style={styles.locationHint}>
+              Location off or signal unavailable — showing default Metro Manila
+              map area. Enable location or GPS in settings to see your live position.
+            </Text>
+          </View>
         ) : null}
 
         <View style={styles.recentHeader}>
@@ -236,7 +321,10 @@ export default function HomeScreen() {
             </Text>
             <Pressable
               style={styles.guestBookmarkSignInBtn}
-              onPress={() => router.push("/welcome")}
+              onPress={async () => {
+                await logoutGuest();
+                router.replace("/welcome");
+              }}
             >
               <Text style={styles.guestBookmarkSignInText}>Sign In</Text>
             </Pressable>
@@ -277,6 +365,17 @@ export default function HomeScreen() {
                         {t.routeName}
                       </Text>
                     </View>
+                    {(() => {
+                      const safety = getRouteSafetySummary(t.routeName, t.routeName);
+                      return (
+                        <View style={[styles.chip, { backgroundColor: "#dcfce7", borderColor: "#86efac" }]}>
+                          <Ionicons name="shield-checkmark" size={11} color="#15803d" style={{ marginRight: 2 }} />
+                          <Text style={[styles.chipText, { color: "#166534", fontWeight: "700" }]}>
+                            ★ {safety.averageRating.toFixed(1)} Safety
+                          </Text>
+                        </View>
+                      );
+                    })()}
                   </View>
                   <Text style={styles.fromTo} numberOfLines={2}>
                     <Text style={styles.fromToLabel}>From: </Text>
@@ -409,11 +508,22 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: GREEN_HEADING,
   },
+  locationFallbackBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#fffbeb",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 10,
+  },
   locationHint: {
-    marginTop: 12,
-    fontSize: 13,
-    color: "#64748b",
-    lineHeight: 18,
+    flex: 1,
+    fontSize: 12.5,
+    color: "#92400e",
+    lineHeight: 17,
   },
   recentHeader: {
     flexDirection: "row",

@@ -9,6 +9,10 @@ export type DisplayRoutePlan = {
   estimatedText: string;
   fareText: string;
   scoreText?: string;
+  safetyScore?: number;
+  safetyCount?: number;
+  safetyLevel?: string;
+  safetyTags?: string[];
   /** Board / alight only for chips (no long description). */
   boardStop: string;
   offStop: string;

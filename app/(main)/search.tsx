@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -20,6 +21,16 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+
+import {
+  getRouteSafetySummary,
+  getSafetyLevelStyle,
+  loadAllRouteSafetyRatings,
+  QUICK_SAFETY_TAGS,
+  submitRouteSafetyRating,
+  subscribeToSafetyChanges,
+  type RouteSafetySummary,
+} from "@/lib/routeSafety";
 
 import {
   AndroidPlaceAutocomplete,
@@ -393,7 +404,7 @@ function pickSearchParam(value: string | string[] | undefined): string | undefin
 
 export default function SearchMapScreen() {
   const router = useRouter();
-  const { session, isGuest } = useAuth();
+  const { session, isGuest, logoutGuest } = useAuth();
   const params = useLocalSearchParams<{ origin?: string; destination?: string }>();
   const { isBookmarked, toggleBookmark, addRecentFromTrip } = useTravel();
   const insets = useSafeAreaInsets();
@@ -482,6 +493,23 @@ export default function SearchMapScreen() {
     planId: string;
     coordinate: LatLng;
   } | null>(null);
+
+  // End-of-Trip Route Safety Scoring states
+  const [safetyModalVisible, setSafetyModalVisible] = useState(false);
+  const [planForSafetyRating, setPlanForSafetyRating] = useState<DisplayRoutePlan | null>(null);
+  const [selectedSafetyScore, setSelectedSafetyScore] = useState<number>(5);
+  const [selectedSafetyTags, setSelectedSafetyTags] = useState<string[]>([]);
+  const [safetyFeedback, setSafetyFeedback] = useState("");
+  const [submittingSafety, setSubmittingSafety] = useState(false);
+  const [, setSafetyUpdateTick] = useState(0);
+
+  useEffect(() => {
+    void loadAllRouteSafetyRatings();
+    const unsub = subscribeToSafetyChanges(() => {
+      setSafetyUpdateTick((t) => t + 1);
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     const savedDiscount = session?.user.user_metadata?.discount_type;
@@ -1180,11 +1208,18 @@ export default function SearchMapScreen() {
   }, [tripActivePlan, destinationCoord, navLatitude, navLongitude]);
 
   const endTrip = useCallback(async () => {
-    if (tripActivePlan) {
-      await addRecentFromTrip(tripActivePlan, {
+    const finishedPlan = tripActivePlan;
+    if (finishedPlan) {
+      await addRecentFromTrip(finishedPlan, {
         originLabel: originLabel.trim() || "Current Location",
         destinationLabel: destination.trim() || "De La Salle Araneta University",
       });
+      // Open End-of-Trip Route Safety Scoring
+      setPlanForSafetyRating(finishedPlan);
+      setSelectedSafetyScore(5);
+      setSelectedSafetyTags([]);
+      setSafetyFeedback("");
+      setSafetyModalVisible(true);
     }
     stopTripWatch();
     stopTripSpeech();
@@ -1199,6 +1234,56 @@ export default function SearchMapScreen() {
     stopTripWatch,
     tripActivePlan,
   ]);
+
+  async function handleSubmitSafetyRating() {
+    if (!planForSafetyRating) {
+      setSafetyModalVisible(false);
+      return;
+    }
+    if (selectedSafetyScore < 1 || selectedSafetyScore > 5) {
+      Alert.alert("Rating required", "Please select a safety score from 1 to 5.");
+      return;
+    }
+
+    setSubmittingSafety(true);
+    try {
+      const summary = await submitRouteSafetyRating({
+        routeKey: planForSafetyRating.routeName,
+        routeName: planForSafetyRating.routeName,
+        rating: selectedSafetyScore,
+        safetyTags: selectedSafetyTags,
+        feedback: safetyFeedback,
+        userId: session?.user?.id,
+        userDisplayName: isGuest
+          ? "Guest Commuter"
+          : (session?.user?.user_metadata?.full_name || session?.user?.email?.split("@")[0] || "DLSAU Commuter"),
+        userRole: isGuest ? "guest" : (session?.user?.user_metadata?.role || "user"),
+      });
+
+      setSafetyModalVisible(false);
+      setPlanForSafetyRating(null);
+      Alert.alert(
+        "Safety Score Submitted",
+        `Thank you for rating this route (${selectedSafetyScore} / 5). Route safety score updated to ${summary.averageRating.toFixed(1)} / 5 (${summary.ratingCount} reviews) and is updated globally for all commuters.`
+      );
+    } catch {
+      setSafetyModalVisible(false);
+      setPlanForSafetyRating(null);
+    } finally {
+      setSubmittingSafety(false);
+    }
+  }
+
+  function handleSkipSafetyRating() {
+    setSafetyModalVisible(false);
+    setPlanForSafetyRating(null);
+  }
+
+  function toggleSafetyTag(tag: string) {
+    setSelectedSafetyTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  }
 
   const startTrip = useCallback(
     async (plan: DisplayRoutePlan) => {
@@ -1367,12 +1452,24 @@ export default function SearchMapScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
+        const { status } = await Location.requestForegroundPermissionsAsync().catch(() => ({ status: "denied" }));
         if (cancelled || status !== "granted") return;
-        const pos = await Location.getCurrentPositionAsync({
+
+        const lastKnown = await Location.getLastKnownPositionAsync().catch(() => null);
+        if (!cancelled && lastKnown?.coords) {
+          setLatitude(lastKnown.coords.latitude);
+          setLongitude(lastKnown.coords.longitude);
+          setLocationReady(true);
+        }
+
+        const locationPromise = Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.High,
         });
-        if (!cancelled) {
+        const timeoutPromise = new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), 3000)
+        );
+        const pos = await Promise.race([locationPromise, timeoutPromise]);
+        if (!cancelled && pos?.coords) {
           setLatitude(pos.coords.latitude);
           setLongitude(pos.coords.longitude);
           setLocationReady(true);
@@ -2462,6 +2559,35 @@ export default function SearchMapScreen() {
                         Estimated fare: {tricycleFareText}
                       </Text>
                     ) : null}
+                    {(() => {
+                      const safety = getRouteSafetySummary(r.routeName, r.routeName);
+                      const sStyle = getSafetyLevelStyle(safety.averageRating);
+                      return (
+                        <View
+                          style={[
+                            styles.routeSafetyBadge,
+                            {
+                              backgroundColor: sStyle.bg,
+                              borderColor: sStyle.border,
+                            },
+                          ]}
+                        >
+                          <Ionicons
+                            name="shield-checkmark"
+                            size={12}
+                            color={sStyle.color}
+                          />
+                          <Text
+                            style={[
+                              styles.routeSafetyBadgeText,
+                              { color: sStyle.color },
+                            ]}
+                          >
+                            {safety.averageRating.toFixed(1)} / 5 Safety Score ({safety.ratingCount})
+                          </Text>
+                        </View>
+                      );
+                    })()}
                     {r.scoreText ? (
                       <Text style={styles.routeLine}>Score: {r.scoreText}</Text>
                     ) : null}
@@ -2482,7 +2608,10 @@ export default function SearchMapScreen() {
                               { text: "Cancel", style: "cancel" },
                               {
                                 text: "Sign In",
-                                onPress: () => router.push("/welcome"),
+                                onPress: async () => {
+                                  await logoutGuest();
+                                  router.replace("/welcome");
+                                },
                               },
                             ]
                           );
@@ -2549,6 +2678,37 @@ export default function SearchMapScreen() {
               <>
                 <View style={styles.rideDetailsCard}>
                   <Text style={styles.rideDetailsTitle}>Ride details</Text>
+                  {selectedMapPlan ? (() => {
+                    const safety = getRouteSafetySummary(selectedMapPlan.routeName, selectedMapPlan.routeName);
+                    const sStyle = getSafetyLevelStyle(safety.averageRating);
+                    return (
+                      <View style={styles.rideSafetyCard}>
+                        <View style={styles.rideSafetyHeaderRow}>
+                          <View style={[styles.rideSafetyBadgePill, { backgroundColor: sStyle.bg, borderColor: sStyle.border }]}>
+                            <Ionicons name="shield-checkmark" size={13} color={sStyle.color} />
+                            <Text style={[styles.rideSafetyBadgeText, { color: sStyle.color }]}>
+                              {sStyle.label}
+                            </Text>
+                          </View>
+                          <Text style={styles.rideSafetyScoreNum}>
+                            ★ {safety.averageRating.toFixed(1)} / 5.0
+                          </Text>
+                        </View>
+                        <Text style={styles.rideSafetyCountText}>
+                          Based on {safety.ratingCount} DLSAU commuter safety ratings
+                        </Text>
+                        {safety.topTags.length > 0 ? (
+                          <View style={styles.rideSafetyTagsRow}>
+                            {safety.topTags.map((tag) => (
+                              <View key={tag} style={styles.rideSafetyTagChip}>
+                                <Text style={styles.rideSafetyTagChipText}>{tag}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })() : null}
                   {rideDetailSegments.map((segment, index) => {
                   let modeText = "Walk";
                   if (segment.segmentType === "jeepney") {
@@ -2642,6 +2802,143 @@ export default function SearchMapScreen() {
         </ScrollView>
       </Animated.View>
       ) : null}
+
+      {/* End-of-Trip Route Safety Scoring Modal */}
+      <Modal
+        visible={safetyModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleSkipSafetyRating}
+      >
+        <View style={styles.safetyModalBackdrop}>
+          <View style={styles.safetyModalCard}>
+            <View style={styles.safetyModalHeader}>
+              <View style={styles.safetyModalIconCircle}>
+                <Ionicons name="shield-checkmark" size={24} color="#15803d" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.safetyModalTitle}>Rate Route Safety</Text>
+                <Text style={styles.safetyModalSubtitle} numberOfLines={1}>
+                  {planForSafetyRating?.routeName || "Completed Route"}
+                </Text>
+              </View>
+              <Pressable
+                onPress={handleSkipSafetyRating}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Close safety rating"
+              >
+                <Ionicons name="close" size={22} color="#64748b" />
+              </Pressable>
+            </View>
+
+            <Text style={styles.safetyModalPrompt}>
+              How safe did you feel on this trip? (Scale 1 - 5)
+            </Text>
+
+            {/* 1-5 Rating Stars Selector */}
+            <View style={styles.safetyRatingStarsRow}>
+              {[1, 2, 3, 4, 5].map((score) => {
+                const isSelected = selectedSafetyScore >= score;
+                return (
+                  <Pressable
+                    key={score}
+                    onPress={() => setSelectedSafetyScore(score)}
+                    style={styles.safetyStarBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Score ${score} out of 5`}
+                  >
+                    <Ionicons
+                      name={isSelected ? "star" : "star-outline"}
+                      size={34}
+                      color={isSelected ? "#eab308" : "#cbd5e1"}
+                    />
+                    <Text
+                      style={[
+                        styles.safetyStarNum,
+                        isSelected && { color: "#ca8a04", fontWeight: "700" },
+                      ]}
+                    >
+                      {score}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.safetyScoreDescBadge}>
+              <Text style={styles.safetyScoreDescText}>
+                {selectedSafetyScore === 5 && "★ 5 / 5 · Very Safe & Well-lit"}
+                {selectedSafetyScore === 4 && "★ 4 / 5 · Safe & Comfortable Commute"}
+                {selectedSafetyScore === 3 && "★ 3 / 5 · Moderate Safety (Stay alert)"}
+                {selectedSafetyScore === 2 && "★ 2 / 5 · Needs Safety Improvement"}
+                {selectedSafetyScore === 1 && "★ 1 / 5 · Very Unsafe / High Caution"}
+              </Text>
+            </View>
+
+            {/* Quick Safety Tags */}
+            <Text style={styles.safetyTagsLabel}>Safety Observations (Optional)</Text>
+            <View style={styles.safetyTagsGrid}>
+              {QUICK_SAFETY_TAGS.map((tag) => {
+                const active = selectedSafetyTags.includes(tag);
+                return (
+                  <Pressable
+                    key={tag}
+                    onPress={() => toggleSafetyTag(tag)}
+                    style={[
+                      styles.safetyTagChip,
+                      active && styles.safetyTagChipActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.safetyTagChipText,
+                        active && styles.safetyTagChipTextActive,
+                      ]}
+                    >
+                      {active ? "✓ " : "+ "}{tag}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Optional Short Feedback */}
+            <TextInput
+              style={styles.safetyFeedbackInput}
+              value={safetyFeedback}
+              onChangeText={setSafetyFeedback}
+              placeholder="Add short details for other commuters (optional)"
+              placeholderTextColor="#94a3b8"
+              maxLength={140}
+            />
+
+            <View style={styles.safetyActionsRow}>
+              <Pressable
+                style={styles.safetySkipBtn}
+                onPress={handleSkipSafetyRating}
+                disabled={submittingSafety}
+              >
+                <Text style={styles.safetySkipBtnText}>Skip</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.safetySubmitBtn,
+                  submittingSafety && { opacity: 0.7 },
+                ]}
+                onPress={handleSubmitSafetyRating}
+                disabled={submittingSafety}
+              >
+                {submittingSafety ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.safetySubmitBtnText}>Submit Safety Score</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -3791,6 +4088,233 @@ const styles = StyleSheet.create({
     color: "#78350F",
     lineHeight: 17,
     flex: 1,
+  },
+  routeSafetyBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginTop: 5,
+    marginBottom: 2,
+  },
+  routeSafetyBadgeText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+  },
+  rideSafetyCard: {
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  rideSafetyHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  rideSafetyBadgePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  rideSafetyBadgeText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  rideSafetyScoreNum: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  rideSafetyCountText: {
+    fontSize: 11.5,
+    color: "#64748b",
+    marginTop: 4,
+  },
+  rideSafetyTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 8,
+  },
+  rideSafetyTagChip: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  rideSafetyTagChipText: {
+    fontSize: 11,
+    color: "#334155",
+    fontWeight: "600",
+  },
+  safetyModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 16,
+  },
+  safetyModalCard: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: "#ffffff",
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  safetyModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  safetyModalIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#dcfce7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  safetyModalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  safetyModalSubtitle: {
+    fontSize: 12.5,
+    color: "#64748b",
+    marginTop: 1,
+  },
+  safetyModalPrompt: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#334155",
+    marginTop: 4,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  safetyRatingStarsRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+    marginVertical: 10,
+  },
+  safetyStarBtn: {
+    alignItems: "center",
+    padding: 4,
+  },
+  safetyStarNum: {
+    fontSize: 12,
+    color: "#94a3b8",
+    marginTop: 2,
+    fontWeight: "600",
+  },
+  safetyScoreDescBadge: {
+    alignSelf: "center",
+    backgroundColor: "#fef9c3",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+    marginBottom: 12,
+  },
+  safetyScoreDescText: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#854d0e",
+  },
+  safetyTagsLabel: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#475569",
+    marginBottom: 6,
+  },
+  safetyTagsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 12,
+  },
+  safetyTagChip: {
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  safetyTagChipActive: {
+    backgroundColor: "#dcfce7",
+    borderColor: "#86efac",
+  },
+  safetyTagChipText: {
+    fontSize: 11.5,
+    color: "#475569",
+    fontWeight: "600",
+  },
+  safetyTagChipTextActive: {
+    color: "#166534",
+    fontWeight: "700",
+  },
+  safetyFeedbackInput: {
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 13.5,
+    color: "#0f172a",
+    backgroundColor: "#fff",
+    marginBottom: 16,
+  },
+  safetyActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 12,
+  },
+  safetySkipBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 10,
+  },
+  safetySkipBtnText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  safetySubmitBtn: {
+    backgroundColor: GREEN,
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 155,
+  },
+  safetySubmitBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#ffffff",
   },
   pressed: {
     opacity: 0.75,

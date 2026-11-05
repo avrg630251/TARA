@@ -16,7 +16,7 @@ import { supabase } from "@/lib/supabase";
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { loginAsGuest } = useAuth();
+  const { loginAsGuest, clearPasswordRecovery } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +30,7 @@ export default function LoginScreen() {
       return;
     }
 
+    clearPasswordRecovery();
     setSubmitting(true);
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: trimmed,
@@ -73,7 +74,22 @@ export default function LoginScreen() {
             textContentType="password"
           />
 
-          <Text style={styles.forgot}>Forgot password?</Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.forgotBtn,
+              pressed && { opacity: 0.7 },
+            ]}
+            onPress={() =>
+              router.push({
+                pathname: "/forgot-password",
+                params: email.trim() ? { email: email.trim() } : undefined,
+              } as any)
+            }
+            accessibilityRole="button"
+            accessibilityLabel="Forgot password"
+          >
+            <Text style={styles.forgot}>Forgot password?</Text>
+          </Pressable>
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -168,13 +184,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     marginBottom: 16,
   },
+  forgotBtn: {
+    alignSelf: "center",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginTop: 4,
+    marginBottom: 16,
+  },
   forgot: {
     textAlign: "center",
     fontSize: 16,
-    fontWeight: "500",
-    color: "#1f2937",
-    marginTop: 6,
-    marginBottom: 20,
+    fontWeight: "600",
+    color: "#1C5141",
+    textDecorationLine: "underline",
   },
   error: {
     color: "#dc2626",

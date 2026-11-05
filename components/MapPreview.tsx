@@ -6,15 +6,21 @@ export type MapPreviewProps = {
   latitude: number;
   longitude: number;
   height: number;
+  showUserLocation?: boolean;
 };
 
-export function MapPreview({ latitude, longitude, height }: MapPreviewProps) {
+export function MapPreview({
+  latitude,
+  longitude,
+  height,
+  showUserLocation = true,
+}: MapPreviewProps) {
   return (
     <View style={[styles.wrap, { height }]}>
       <FullScreenMap
         latitude={latitude}
         longitude={longitude}
-        trackedCoordinate={{ latitude, longitude }}
+        trackedCoordinate={showUserLocation ? { latitude, longitude } : null}
         routeRenderKey="home-preview"
         fitSignal={0}
       />

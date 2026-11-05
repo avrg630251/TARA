@@ -11,7 +11,8 @@ import {
 } from "react";
 
 import type { UserRole } from "@/lib/adminAndFeedback";
-import { supabase } from "@/lib/supabase";
+import { revokeSessionOnServerBestEffort, supabase } from "@/lib/supabase";
+import { clearSupabaseAuthStorage } from "@/lib/supabase-auth-storage";
 
 const GUEST_STORAGE_KEY = "tara:guest_mode_active";
 
@@ -21,8 +22,12 @@ type AuthContextValue = {
   userRole: UserRole;
   isAdmin: boolean;
   isGuest: boolean;
+  isPasswordRecovery: boolean;
   loginAsGuest: () => Promise<void>;
   logoutGuest: () => Promise<void>;
+  signOut: () => Promise<void>;
+  markPasswordRecovery: () => void;
+  clearPasswordRecovery: () => void;
   setUserRole: (role: UserRole) => Promise<void>;
 };
 
@@ -32,8 +37,12 @@ const AuthContext = createContext<AuthContextValue>({
   userRole: "user",
   isAdmin: false,
   isGuest: false,
+  isPasswordRecovery: false,
   loginAsGuest: async () => {},
   logoutGuest: async () => {},
+  signOut: async () => {},
+  markPasswordRecovery: () => {},
+  clearPasswordRecovery: () => {},
   setUserRole: async () => {},
 });
 
@@ -42,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [userRole, setUserRoleState] = useState<UserRole>("user");
   const [isGuest, setIsGuestState] = useState(false);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   const syncRoleFromSession = useCallback(async (currentSession: Session | null) => {
     if (!currentSession?.user) {
@@ -113,7 +123,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
+    } = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setIsPasswordRecovery(true);
+      } else if (event === "SIGNED_OUT") {
+        setIsPasswordRecovery(false);
+      }
       setSession(s);
       void syncRoleFromSession(s);
       setLoading(false);
@@ -121,6 +136,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, [syncRoleFromSession]);
+
+  const markPasswordRecovery = useCallback(() => {
+    setIsPasswordRecovery(true);
+  }, []);
+
+  const clearPasswordRecovery = useCallback(() => {
+    setIsPasswordRecovery(false);
+  }, []);
 
   const loginAsGuest = useCallback(async () => {
     await AsyncStorage.setItem(GUEST_STORAGE_KEY, "true").catch(() => {});
@@ -133,6 +156,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsGuestState(false);
     setUserRoleState("user");
   }, []);
+
+  const signOut = useCallback(async () => {
+    const accessToken = session?.access_token;
+
+    try {
+      supabase.auth.stopAutoRefresh();
+    } catch {}
+
+    // Clear persisted storage BEFORE GoTrue reads it so an expired token
+    // or reset socket can never block or crash local sign-out.
+    await clearSupabaseAuthStorage();
+    await AsyncStorage.removeItem(GUEST_STORAGE_KEY).catch(() => {});
+
+    setSession(null);
+    setIsGuestState(false);
+    setIsPasswordRecovery(false);
+    setUserRoleState("guest");
+
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      // Local state and storage are already cleared
+    }
+
+    // Ensure storage stays wiped even if an in-flight refresh finished concurrently
+    await clearSupabaseAuthStorage();
+
+    // Best-effort server token revocation in background (never throws)
+    void revokeSessionOnServerBestEffort(accessToken);
+  }, [session?.access_token]);
 
   const setUserRole = useCallback(
     async (role: UserRole) => {
@@ -168,11 +221,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       userRole,
       isAdmin,
       isGuest,
+      isPasswordRecovery,
       loginAsGuest,
       logoutGuest,
+      signOut,
+      markPasswordRecovery,
+      clearPasswordRecovery,
       setUserRole,
     }),
-    [session, loading, userRole, isAdmin, isGuest, loginAsGuest, logoutGuest, setUserRole]
+    [
+      session,
+      loading,
+      userRole,
+      isAdmin,
+      isGuest,
+      isPasswordRecovery,
+      loginAsGuest,
+      logoutGuest,
+      signOut,
+      markPasswordRecovery,
+      clearPasswordRecovery,
+      setUserRole,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

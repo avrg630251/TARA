@@ -5,14 +5,18 @@ import { useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function AuthLayout() {
-  const { session, loading } = useAuth();
+  const { session, loading, isPasswordRecovery } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading && session) {
-      router.replace("/(main)");
+      if (isPasswordRecovery) {
+        router.replace("/auth/reset-password" as any);
+      } else {
+        router.replace("/(main)");
+      }
     }
-  }, [loading, router, session]);
+  }, [loading, router, session, isPasswordRecovery]);
 
   if (loading) {
     return (
