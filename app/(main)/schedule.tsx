@@ -133,7 +133,7 @@ export default function ScheduleScreen() {
           />
           <Text style={styles.fieldLabel}>Days</Text>
           <View style={styles.daysRow}>
-            {["Mon", "Tue", "Wed", "Thu", "Fri"].map((day) => {
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => {
               const selected = days.includes(day);
               return (
                 <Pressable
@@ -292,7 +292,8 @@ const styles = StyleSheet.create({
   },
   daysRow: {
     flexDirection: "row",
-    gap: 8,
+    flexWrap: "wrap",
+    gap: 6,
     marginBottom: 12,
   },
   meridiemRow: {
@@ -311,7 +312,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   dayChip: {
-    width: 52,
+    flex: 1,
+    minWidth: 44,
     height: 38,
     borderRadius: 19,
     alignItems: "center",

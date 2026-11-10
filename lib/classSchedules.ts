@@ -151,38 +151,46 @@ export function getNextClassInfo(
   if (!items || !items.length) return { item: null, minutesUntil: null };
 
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const todayName = DAY_NAMES[now.getDay()];
+  const todayIndex = now.getDay();
 
   const candidates = items
     .map((item) => {
-      let dayOffset = 0;
       const scheduleDays =
         item.days?.length
           ? item.days
           : item.day
             ? [item.day]
             : [];
-      const sameDay = scheduleDays.some(
-        (day) => day.slice(0, 3).toLowerCase() === todayName.toLowerCase()
-      );
-      if (!sameDay) {
-        const todayIndex = DAY_NAMES.indexOf(todayName);
-        const offsets = scheduleDays
-          .map((day) => DAY_NAMES.indexOf(day.slice(0, 3).replace(/^./, (c) => c.toUpperCase())))
-          .filter((index) => index >= 0)
-          .map((index) => (index - todayIndex + 7) % 7 || 7);
-        dayOffset = offsets.length ? Math.min(...offsets) : 7;
+      const classMinutes = toMinutes(item.time);
+
+      const dayIndices = scheduleDays
+        .map((day) => {
+          const prefix = day.trim().slice(0, 3).toLowerCase();
+          return DAY_NAMES.findIndex((d) => d.toLowerCase() === prefix);
+        })
+        .filter((index) => index >= 0);
+
+      let bestMinutesUntil = Number.POSITIVE_INFINITY;
+      let bestDayOffset = 7;
+
+      for (const targetDayIndex of dayIndices) {
+        let dayOffset = (targetDayIndex - todayIndex + 7) % 7;
+        let minutesUntil = classMinutes - nowMinutes + dayOffset * 24 * 60;
+        if (dayOffset === 0 && minutesUntil < 0) {
+          // Today's class has already started/passed; next occurrence on this weekday is in 7 days
+          dayOffset = 7;
+          minutesUntil = classMinutes - nowMinutes + 7 * 24 * 60;
+        }
+        if (minutesUntil >= 0 && minutesUntil < bestMinutesUntil) {
+          bestMinutesUntil = minutesUntil;
+          bestDayOffset = dayOffset;
+        }
       }
 
-      const classMinutes = toMinutes(item.time);
-      const currentMinutes = nowMinutes + dayOffset * 24 * 60;
-      const minutesUntil = classMinutes - nowMinutes + dayOffset * 24 * 60;
-      const shouldUseFuture = sameDay ? minutesUntil >= 0 : true;
       return {
         item,
-        dayOffset,
-        minutesUntil: shouldUseFuture ? minutesUntil : Number.POSITIVE_INFINITY,
-        currentMinutes,
+        dayOffset: bestDayOffset,
+        minutesUntil: bestMinutesUntil,
       };
     })
     .filter((candidate) => Number.isFinite(candidate.minutesUntil))

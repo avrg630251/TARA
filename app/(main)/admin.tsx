@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { TransitVehicleIcon } from "@/components/TransitVehicleIcon";
 import {
   appendAuditLog,
   getAuditLogs,
@@ -68,6 +69,20 @@ export default function AdminScreen() {
   const [statusModalRoute, setStatusModalRoute] = useState<ManagedRoute | null>(null);
   const [routeStatusChoice, setRouteStatusChoice] = useState<RouteAvailabilityStatus>("active");
   const [routeNotice, setRouteNotice] = useState("");
+  const [routeFareInput, setRouteFareInput] = useState("");
+  const [routeSoloFareInput, setRouteSoloFareInput] = useState("");
+
+  // Add New Route Modal states
+  const [newRouteModalVisible, setNewRouteModalVisible] = useState(false);
+  const [newRouteName, setNewRouteName] = useState("");
+  const [newRouteOrigin, setNewRouteOrigin] = useState("");
+  const [newRouteDestination, setNewRouteDestination] = useState("DLSAU Main Gate, Malabon");
+  const [newRouteVehicle, setNewRouteVehicle] = useState<"jeepney" | "tricycle" | "bus">("jeepney");
+  const [newRouteFare, setNewRouteFare] = useState("14");
+  const [newRouteSoloFare, setNewRouteSoloFare] = useState("50");
+  const [newRouteLandmarks, setNewRouteLandmarks] = useState("");
+  const [newRouteSignboard, setNewRouteSignboard] = useState("");
+  const [newRouteWhatToSay, setNewRouteWhatToSay] = useState("");
 
   const [newGuideModalVisible, setNewGuideModalVisible] = useState(false);
   const [guideTitle, setGuideTitle] = useState("");
@@ -107,67 +122,120 @@ export default function AdminScreen() {
       setReports(rep);
       setLogs(l);
 
-      // Pull real signed-up users directly from Supabase
+      // Pull real signed-up users directly from Supabase (combine RPC + profiles + local cache)
       let pulledUsers: ManagedUserAccount[] = [];
+      const addOrMergeUser = (candidate: ManagedUserAccount) => {
+        if (!candidate.id && !candidate.email) return;
+        const normEmail = candidate.email?.trim().toLowerCase();
+        const existingIdx = pulledUsers.findIndex(
+          (u) =>
+            (candidate.id && u.id === candidate.id) ||
+            (normEmail && u.email?.trim().toLowerCase() === normEmail)
+        );
+        if (existingIdx === -1) {
+          pulledUsers.push(candidate);
+        } else {
+          const prev = pulledUsers[existingIdx];
+          pulledUsers[existingIdx] = {
+            ...prev,
+            email:
+              prev.email && !prev.email.startsWith("user@")
+                ? prev.email
+                : candidate.email || prev.email,
+            fullName:
+              prev.fullName &&
+              prev.fullName !== "Registered User" &&
+              prev.fullName !== "Registered Commuter"
+                ? prev.fullName
+                : candidate.fullName || prev.fullName,
+            role: prev.role === "admin" ? "admin" : candidate.role || prev.role,
+          };
+        }
+      };
+
       try {
         // 1. Try RPC function which queries auth.users directly
         const { data: rpcData, error: rpcError } = await supabase.rpc("get_all_registered_users");
         if (!rpcError && rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
-          pulledUsers = rpcData.map((u: any) => ({
-            id: u.id,
-            email: u.email || (u.id === session?.user?.id ? (session?.user?.email || "user@dlsau.edu.ph") : "user@dlsau.edu.ph"),
-            fullName: u.full_name || (u.id === session?.user?.id ? (session?.user?.user_metadata?.full_name || session?.user?.email?.split("@")[0] || "Registered User") : "Registered User"),
-            role: (u.role as UserRole) || "user",
-            schoolName: u.school_name || "De La Salle Araneta University",
-            departmentOrProgram: (u.department_or_program && u.department_or_program !== "Registered Student")
-              ? u.department_or_program
-              : (u.role === "admin" ? "University Administration" : undefined),
-            status: "active",
-            joinedAt: u.created_at || new Date().toISOString(),
-          }));
-        } else {
-          // 2. Query public.profiles directly
-          const res = await supabase
-            .from("profiles")
-            .select("id, email, role, full_name, school_name, department_or_program, created_at")
-            .order("created_at", { ascending: false });
-
-          let dbProfiles: any[] | null = null;
-          if (!res.error && res.data) {
-            dbProfiles = res.data;
-          } else {
-            const fallbackRes = await supabase
-              .from("profiles")
-              .select("id, role, full_name, school_name, department_or_program, created_at")
-              .order("created_at", { ascending: false });
-            if (fallbackRes.data) dbProfiles = fallbackRes.data;
+          for (const u of rpcData as any[]) {
+            addOrMergeUser({
+              id: u.id,
+              email:
+                u.email ||
+                (u.id === session?.user?.id
+                  ? session?.user?.email || "user@dlsau.edu.ph"
+                  : "user@dlsau.edu.ph"),
+              fullName:
+                u.full_name ||
+                (u.id === session?.user?.id
+                  ? session?.user?.user_metadata?.full_name ||
+                    session?.user?.email?.split("@")[0] ||
+                    "Registered User"
+                  : u.email?.split("@")[0] || "Registered User"),
+              role: (u.role as UserRole) || "user",
+              schoolName: u.school_name || "De La Salle Araneta University",
+              departmentOrProgram:
+                u.department_or_program &&
+                u.department_or_program !== "Registered Student"
+                  ? u.department_or_program
+                  : u.role === "admin"
+                    ? "University Administration"
+                    : undefined,
+              status: "active",
+              joinedAt: u.created_at || new Date().toISOString(),
+            });
           }
+        }
 
-          if (dbProfiles && dbProfiles.length > 0) {
-            pulledUsers = dbProfiles.map((p: any) => {
-              const isCurrentUser = p.id === session?.user?.id;
-              const email =
-                p.email ||
-                (isCurrentUser
-                  ? session?.user?.email || "admin@dlsau.edu.ph"
-                  : `${(p.full_name || "user").toLowerCase().replace(/[^a-z0-9]/g, ".")}@dlsau.edu.ph`);
-              const fullName =
-                p.full_name ||
-                (isCurrentUser
-                  ? session?.user?.user_metadata?.full_name || session?.user?.email?.split("@")[0] || "Administrator"
-                  : "Registered Commuter");
-              return {
-                id: p.id,
-                email,
-                fullName,
-                role: (p.role as UserRole) || "user",
-                schoolName: p.school_name || "De La Salle Araneta University",
-                departmentOrProgram: (p.department_or_program && p.department_or_program !== "Registered Student")
+        // 2. Also query public.profiles directly and merge any additional users
+        const res = await supabase
+          .from("profiles")
+          .select("id, email, role, full_name, school_name, department_or_program, created_at")
+          .order("created_at", { ascending: false });
+
+        let dbProfiles: any[] | null = null;
+        if (!res.error && res.data) {
+          dbProfiles = res.data;
+        } else {
+          const fallbackRes = await supabase
+            .from("profiles")
+            .select("id, role, full_name, school_name, department_or_program, created_at")
+            .order("created_at", { ascending: false });
+          if (fallbackRes.data) dbProfiles = fallbackRes.data;
+        }
+
+        if (dbProfiles && dbProfiles.length > 0) {
+          for (const p of dbProfiles) {
+            const isCurrentUser = p.id === session?.user?.id;
+            const email =
+              p.email ||
+              (isCurrentUser
+                ? session?.user?.email || "admin@dlsau.edu.ph"
+                : `${(p.full_name || "user")
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]/g, ".")}@dlsau.edu.ph`);
+            const fullName =
+              p.full_name ||
+              (isCurrentUser
+                ? session?.user?.user_metadata?.full_name ||
+                  session?.user?.email?.split("@")[0] ||
+                  "Administrator"
+                : email.split("@")[0] || "Registered Commuter");
+            addOrMergeUser({
+              id: p.id,
+              email,
+              fullName,
+              role: (p.role as UserRole) || "user",
+              schoolName: p.school_name || "De La Salle Araneta University",
+              departmentOrProgram:
+                p.department_or_program &&
+                p.department_or_program !== "Registered Student"
                   ? p.department_or_program
-                  : (p.role === "admin" ? "University Administration" : undefined),
-                status: "active",
-                joinedAt: p.created_at || new Date().toISOString(),
-              };
+                  : p.role === "admin"
+                    ? "University Administration"
+                    : undefined,
+              status: "active",
+              joinedAt: p.created_at || new Date().toISOString(),
             });
           }
         }
@@ -175,11 +243,33 @@ export default function AdminScreen() {
         console.warn("User load error:", err);
       }
 
-      // Incorporate any non-placeholder locally managed users
+      // 3. Incorporate locally recorded registered users
       const localUsers = await getManagedUsers();
       for (const loc of localUsers) {
-        if (!pulledUsers.some((p) => p.id === loc.id)) {
-          pulledUsers.push(loc);
+        addOrMergeUser(loc);
+      }
+
+      // 4. Also discover any registered user accounts who submitted commuter reports
+      for (const reportItem of rep) {
+        if (
+          reportItem.userId &&
+          reportItem.userId !== "guest_user" &&
+          reportItem.userRole !== "guest"
+        ) {
+          const isEmail = reportItem.userName?.includes("@");
+          addOrMergeUser({
+            id: reportItem.userId,
+            email: isEmail
+              ? reportItem.userName
+              : `${(reportItem.userName || "commuter")
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]/g, ".")}@dlsau.edu.ph`,
+            fullName: reportItem.userName || "Registered Commuter",
+            role: reportItem.userRole || "user",
+            schoolName: "De La Salle Araneta University",
+            status: "active",
+            joinedAt: reportItem.submittedAt || new Date().toISOString(),
+          });
         }
       }
 
@@ -305,14 +395,37 @@ export default function AdminScreen() {
     );
   }
 
-  // 2. Route Status & Verification Handler
+  // 2. Route Status, Fare & Verification Handler
   async function handleSaveRouteStatus() {
     if (!statusModalRoute) return;
+
+    const parsedFare = parseFloat(routeFareInput.replace(/[^0-9.]/g, ""));
+    const parsedSolo = parseFloat(routeSoloFareInput.replace(/[^0-9.]/g, ""));
+
+    const hasTricycle =
+      statusModalRoute.hasTricycle || statusModalRoute.vehicleType === "tricycle";
+
+    const nextFare =
+      Number.isFinite(parsedFare) && parsedFare > 0
+        ? Math.ceil(parsedFare)
+        : statusModalRoute.customFare ?? 14;
+
+    const nextSoloFare =
+      hasTricycle && Number.isFinite(parsedSolo) && parsedSolo > 0
+        ? Math.ceil(parsedSolo)
+        : statusModalRoute.customSoloFare ?? (hasTricycle ? 50 : null);
+
+    const nextFareText = hasTricycle
+      ? `₱${nextFare} shared · ₱${nextSoloFare ?? 50} solo`
+      : `Php ${nextFare.toFixed(2)}`;
 
     const updated = routes.map((r) =>
       r.routeId === statusModalRoute.routeId
         ? {
             ...r,
+            fareText: nextFareText,
+            customFare: nextFare,
+            customSoloFare: nextSoloFare,
             status: routeStatusChoice,
             statusNotice: routeNotice.trim() || undefined,
             lastUpdated: new Date().toISOString(),
@@ -326,9 +439,9 @@ export default function AdminScreen() {
 
     await appendAuditLog({
       actor: session?.user?.email || "University Admin",
-      action: "ROUTE_STATUS_UPDATE",
+      action: "ROUTE_FARE_AND_STATUS_UPDATE",
       target: statusModalRoute.routeName,
-      details: `Set status to ${routeStatusChoice.toUpperCase()}. Note: ${routeNotice.trim() || "Normal schedule"}`,
+      details: `Fare set to ${nextFareText}. Status set to ${routeStatusChoice.toUpperCase()}. Note: ${routeNotice.trim() || "Normal schedule"}`,
       isVerified: true,
     });
 
@@ -336,7 +449,101 @@ export default function AdminScreen() {
     setLogs(refreshedLogs);
 
     setStatusModalRoute(null);
-    Alert.alert("Route Updated", `Route "${statusModalRoute.routeName}" availability status updated.`);
+    Alert.alert(
+      "Route & Fare Updated",
+      `"${statusModalRoute.routeName}" has been updated with fare ${nextFareText} and status "${routeStatusChoice.toUpperCase()}".`
+    );
+  }
+
+  // 2b. Create New Admin Route Handler
+  async function handleCreateRoute() {
+    const trimmedName = newRouteName.trim();
+    const trimmedOrigin = newRouteOrigin.trim();
+    const trimmedDest = newRouteDestination.trim() || "DLSAU Main Gate, Malabon";
+
+    if (!trimmedName || !trimmedOrigin) {
+      Alert.alert(
+        "Missing Route Details",
+        "Please enter both the Route Name and Origin Terminal / Boarding Point."
+      );
+      return;
+    }
+
+    const parsedFare = parseFloat(newRouteFare.replace(/[^0-9.]/g, ""));
+    const parsedSolo = parseFloat(newRouteSoloFare.replace(/[^0-9.]/g, ""));
+    const isTrike = newRouteVehicle === "tricycle";
+    const baseFare =
+      Number.isFinite(parsedFare) && parsedFare > 0
+        ? Math.ceil(parsedFare)
+        : isTrike
+          ? 15
+          : newRouteVehicle === "bus"
+            ? 35
+            : 14;
+    const soloFare =
+      isTrike && Number.isFinite(parsedSolo) && parsedSolo > 0
+        ? Math.ceil(parsedSolo)
+        : isTrike
+          ? 50
+          : null;
+
+    const fareText = isTrike
+      ? `₱${baseFare} shared · ₱${soloFare} solo`
+      : `Php ${baseFare.toFixed(2)}`;
+
+    const landmarks = newRouteLandmarks
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const createdRoute: ManagedRoute = {
+      routeId: `itin_admin_${Date.now().toString(36)}`,
+      routeName: trimmedName,
+      origin: trimmedOrigin,
+      destination: trimmedDest,
+      vehicleType: newRouteVehicle,
+      landmarks: landmarks.length > 0 ? landmarks : [trimmedOrigin, trimmedDest],
+      fareText,
+      customFare: baseFare,
+      customSoloFare: soloFare,
+      hasTricycle: isTrike,
+      isCustomAdminRoute: true,
+      signboard: newRouteSignboard.trim() || undefined,
+      whatToSay: newRouteWhatToSay.trim() || "Para po sa DLSAU",
+      status: "active",
+      lastUpdated: new Date().toISOString(),
+      verifiedBy: `${session?.user?.email || "Admin"} (Verified)`,
+    };
+
+    const updated = [createdRoute, ...routes];
+    setRoutes(updated);
+    await saveManagedRoutes(updated);
+
+    await appendAuditLog({
+      actor: session?.user?.email || "University Admin",
+      action: "ROUTE_CREATED",
+      target: createdRoute.routeName,
+      details: `Added ${newRouteVehicle.toUpperCase()} route from ${trimmedOrigin} to ${trimmedDest} (Fare: ${fareText})`,
+      isVerified: true,
+    });
+
+    const refreshedLogs = await getAuditLogs();
+    setLogs(refreshedLogs);
+
+    setNewRouteName("");
+    setNewRouteOrigin("");
+    setNewRouteDestination("DLSAU Main Gate, Malabon");
+    setNewRouteFare("14");
+    setNewRouteSoloFare("50");
+    setNewRouteLandmarks("");
+    setNewRouteSignboard("");
+    setNewRouteWhatToSay("");
+    setNewRouteModalVisible(false);
+
+    Alert.alert(
+      "New Route Added",
+      `"${createdRoute.routeName}" has been added and is now live in route search.`
+    );
   }
 
   // 3. Transit Advisory Posting Handler
@@ -734,17 +941,24 @@ export default function AdminScreen() {
           {activeTab === "routes" && (
             <View>
               <View style={styles.sectionHeaderRow}>
-                <View>
-                  <Text style={styles.sectionTitle}>Transit Routes & Availability Records</Text>
+                <View style={{ flex: 1, marginRight: 12 }}>
+                  <Text style={styles.sectionTitle}>Transit Routes & Fares</Text>
                   <Text style={styles.sectionSubtitle}>
-                    Manage route availability, temporary suspensions, and detour reroutes with date-stamped logs.
+                    Add new routes, modify fares per route, and manage route availability or detours.
                   </Text>
                 </View>
+                <Pressable
+                  onPress={() => setNewRouteModalVisible(true)}
+                  style={styles.createGuideBtn}
+                >
+                  <Ionicons name="add" size={18} color="#fff" />
+                  <Text style={styles.createGuideBtnText}>Add Route</Text>
+                </Pressable>
               </View>
 
               {routes.length === 0 ? (
                 <View style={styles.emptyAccountsCard}>
-                  <Ionicons name="bus-outline" size={44} color="#94a3b8" />
+                  <TransitVehicleIcon type="jeepney" size={44} color="#94a3b8" />
                   <Text style={styles.emptyAccountsTitle}>No Routes Added Yet</Text>
                   <Text style={styles.emptyAccountsText}>
                     There are currently no active routes recorded. Administrators can register and update verified campus transit routes here.
@@ -761,8 +975,8 @@ export default function AdminScreen() {
                     <View key={r.routeId} style={styles.routeCard}>
                       <View style={styles.routeHeader}>
                         <View style={styles.routeIcon}>
-                          <Ionicons
-                            name={r.vehicleType === "bus" ? "bus" : r.vehicleType === "tricycle" ? "bicycle" : "car"}
+                          <TransitVehicleIcon
+                            type={r.vehicleType}
                             size={20}
                             color={GREEN}
                           />
@@ -778,10 +992,18 @@ export default function AdminScreen() {
                             setStatusModalRoute(r);
                             setRouteStatusChoice(r.status);
                             setRouteNotice(r.statusNotice || "");
+                            const numMatch = r.fareText.match(/(\d+(?:\.\d+)?)/);
+                            const defaultBase =
+                              r.customFare ??
+                              (numMatch ? Math.ceil(parseFloat(numMatch[1])) : 14);
+                            setRouteFareInput(String(defaultBase));
+                            setRouteSoloFareInput(
+                              String(r.customSoloFare ?? 50)
+                            );
                           }}
                           style={styles.statusChangeBtn}
                         >
-                          <Text style={styles.statusChangeBtnText}>Update</Text>
+                          <Text style={styles.statusChangeBtnText}>Edit Fare / Status</Text>
                         </Pressable>
                       </View>
 
@@ -1061,13 +1283,41 @@ export default function AdminScreen() {
       </Modal>
 
       {/* =========================================================================
-          MODAL: ROUTE STATUS (Requirements 2.1, 3.2, 3.3)
+          MODAL: ROUTE FARE & STATUS (Requirements 2.1, 3.2, 3.3)
          ========================================================================= */}
       <Modal visible={Boolean(statusModalRoute)} transparent animationType="fade" onRequestClose={() => setStatusModalRoute(null)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Route Availability & Notices</Text>
+            <Text style={styles.modalTitle}>Edit Route Fare & Availability</Text>
             <Text style={styles.modalSub}>{statusModalRoute?.routeName}</Text>
+
+            <Text style={styles.modalFieldLabel}>
+              {statusModalRoute?.hasTricycle || statusModalRoute?.vehicleType === "tricycle"
+                ? "Regular / Shared Fare (₱ PHP):"
+                : "Route Fare (₱ PHP):"}
+            </Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. 14"
+              value={routeFareInput}
+              onChangeText={setRouteFareInput}
+              keyboardType="numeric"
+            />
+
+            {(statusModalRoute?.hasTricycle || statusModalRoute?.vehicleType === "tricycle") && (
+              <>
+                <Text style={styles.modalFieldLabel}>
+                  Tricycle Solo / Special Trip Fare (₱ PHP):
+                </Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g. 50"
+                  value={routeSoloFareInput}
+                  onChangeText={setRouteSoloFareInput}
+                  keyboardType="numeric"
+                />
+              </>
+            )}
 
             <Text style={styles.modalFieldLabel}>Select Operating Status:</Text>
             <View style={styles.statusButtonsRow}>
@@ -1111,12 +1361,171 @@ export default function AdminScreen() {
             />
 
             <Pressable onPress={handleSaveRouteStatus} style={styles.modalSubmitBtn}>
-              <Text style={styles.modalSubmitBtnText}>Save Status & Log Change</Text>
+              <Text style={styles.modalSubmitBtnText}>Save Fare & Status</Text>
             </Pressable>
             <Pressable onPress={() => setStatusModalRoute(null)} style={styles.modalCloseBtn}>
               <Text style={styles.modalCloseBtnText}>Cancel</Text>
             </Pressable>
           </View>
+        </View>
+      </Modal>
+
+      {/* =========================================================================
+          MODAL: ADD NEW ROUTE
+         ========================================================================= */}
+      <Modal
+        visible={newRouteModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setNewRouteModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ScrollView
+            style={{ width: "100%", maxWidth: 460 }}
+            contentContainerStyle={{ justifyContent: "center", paddingVertical: 20 }}
+          >
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Add New Transit Route</Text>
+              <Text style={styles.modalSub}>
+                Register a new campus commute route with custom fare and vehicle instructions.
+              </Text>
+
+              <Text style={styles.modalFieldLabel}>Route Name *</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. Monumento / MCU to DLSAU Main Gate"
+                value={newRouteName}
+                onChangeText={setNewRouteName}
+              />
+
+              <Text style={styles.modalFieldLabel}>Origin / Boarding Terminal *</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. Monumento LRT Station / Victory Liner"
+                value={newRouteOrigin}
+                onChangeText={setNewRouteOrigin}
+              />
+
+              <Text style={styles.modalFieldLabel}>Destination</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="DLSAU Main Gate, Malabon"
+                value={newRouteDestination}
+                onChangeText={setNewRouteDestination}
+              />
+
+              <Text style={styles.modalFieldLabel}>Primary Transit Mode *</Text>
+              <View style={styles.statusButtonsRow}>
+                {(
+                  [
+                    { key: "jeepney", label: "Jeepney" },
+                    { key: "tricycle", label: "Tricycle" },
+                    { key: "bus", label: "Bus" },
+                  ] as const
+                ).map((mode) => {
+                  const selected = newRouteVehicle === mode.key;
+                  return (
+                    <Pressable
+                      key={mode.key}
+                      onPress={() => {
+                        setNewRouteVehicle(mode.key);
+                        if (mode.key === "tricycle") setNewRouteFare("15");
+                        else if (mode.key === "bus") setNewRouteFare("35");
+                        else setNewRouteFare("14");
+                      }}
+                      style={[
+                        styles.statusChoiceBtn,
+                        selected && styles.statusChoiceBtnActive,
+                        { flexDirection: "row", justifyContent: "center", gap: 6 },
+                      ]}
+                    >
+                      <TransitVehicleIcon
+                        type={mode.key}
+                        size={16}
+                        color={selected ? GREEN : "#64748b"}
+                      />
+                      <Text
+                        style={[
+                          styles.statusChoiceText,
+                          selected && styles.statusChoiceTextActive,
+                        ]}
+                      >
+                        {mode.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.modalFieldLabel}>
+                {newRouteVehicle === "tricycle"
+                  ? "Shared Fare (₱ PHP) *"
+                  : "Regular Base Fare (₱ PHP) *"}
+              </Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="14"
+                value={newRouteFare}
+                onChangeText={setNewRouteFare}
+                keyboardType="numeric"
+              />
+
+              {newRouteVehicle === "tricycle" && (
+                <>
+                  <Text style={styles.modalFieldLabel}>
+                    Solo / Special Trip Fare (₱ PHP)
+                  </Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="50"
+                    value={newRouteSoloFare}
+                    onChangeText={setNewRouteSoloFare}
+                    keyboardType="numeric"
+                  />
+                </>
+              )}
+
+              <Text style={styles.modalFieldLabel}>
+                Signboard / Color to Look For (Optional)
+              </Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. Malabon / Potrero / Victoneta or Yellow Tricycle"
+                value={newRouteSignboard}
+                onChangeText={setNewRouteSignboard}
+              />
+
+              <Text style={styles.modalFieldLabel}>
+                What to Tell the Driver (Optional)
+              </Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. Para po sa De La Salle Araneta / Victoneta Gate"
+                value={newRouteWhatToSay}
+                onChangeText={setNewRouteWhatToSay}
+              />
+
+              <Text style={styles.modalFieldLabel}>
+                Key Landmarks (comma-separated)
+              </Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. MCU, Samson Road, Victoneta Ave, DLSAU Gate"
+                value={newRouteLandmarks}
+                onChangeText={setNewRouteLandmarks}
+              />
+
+              <Pressable onPress={handleCreateRoute} style={styles.modalSubmitBtn}>
+                <Text style={styles.modalSubmitBtnText}>Create Route & Publish</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setNewRouteModalVisible(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Text style={styles.modalCloseBtnText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
         </View>
       </Modal>
 

@@ -51,6 +51,18 @@ export type ManagedRoute = {
   vehicleType: "jeepney" | "bus" | "tricycle";
   landmarks: string[];
   fareText: string;
+  /** Numeric regular/shared fare set or overridden by admin */
+  customFare?: number | null;
+  /** Numeric solo/special fare for tricycle routes set or overridden by admin */
+  customSoloFare?: number | null;
+  /** Whether this route includes a tricycle leg */
+  hasTricycle?: boolean;
+  /** Whether this route was added manually by an admin via the Admin Panel */
+  isCustomAdminRoute?: boolean;
+  signboard?: string;
+  whatToSay?: string;
+  originLat?: number;
+  originLng?: number;
   status: RouteAvailabilityStatus;
   statusNotice?: string;
   lastUpdated: string;
@@ -195,6 +207,90 @@ export async function saveManagedUsers(users: ManagedUserAccount[]): Promise<voi
   await AsyncStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
 }
 
+/**
+ * Records or updates a registered user in both local storage and Supabase public.profiles
+ * so the Admin Panel Accounts tab always has a complete list of registered users.
+ */
+export async function recordRegisteredUser(user: {
+  id: string;
+  email: string;
+  fullName?: string;
+  role?: UserRole;
+  departmentOrProgram?: string;
+  joinedAt?: string;
+}): Promise<void> {
+  if (!user.id || !user.email) return;
+  const cleanEmail = user.email.trim().toLowerCase();
+  const displayName =
+    user.fullName?.trim() ||
+    cleanEmail.split("@")[0] ||
+    "Registered User";
+  const role: UserRole = user.role || "user";
+  const joinedAt = user.joinedAt || new Date().toISOString();
+
+  try {
+    const existing = await getManagedUsers();
+    const idx = existing.findIndex(
+      (u) => u.id === user.id || u.email.trim().toLowerCase() === cleanEmail
+    );
+    if (idx >= 0) {
+      existing[idx] = {
+        ...existing[idx],
+        id: user.id,
+        email: cleanEmail,
+        fullName:
+          displayName !== "Registered User"
+            ? displayName
+            : existing[idx].fullName || displayName,
+        role: existing[idx].role === "admin" ? "admin" : role,
+      };
+    } else {
+      existing.unshift({
+        id: user.id,
+        email: cleanEmail,
+        fullName: displayName,
+        role,
+        schoolName: "De La Salle Araneta University",
+        departmentOrProgram: user.departmentOrProgram || "Registered Student",
+        status: "active",
+        joinedAt,
+      });
+    }
+    await saveManagedUsers(existing);
+  } catch {}
+
+  try {
+    await supabase.from("profiles").upsert(
+      {
+        id: user.id,
+        email: cleanEmail,
+        full_name: displayName,
+        role,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
+  } catch {}
+}
+
+let cachedManagedRoutes: ManagedRoute[] | null = null;
+const routeSubscribers = new Set<() => void>();
+
+export function subscribeToManagedRoutes(cb: () => void): () => void {
+  routeSubscribers.add(cb);
+  return () => {
+    routeSubscribers.delete(cb);
+  };
+}
+
+function notifyManagedRoutesChanged() {
+  for (const cb of routeSubscribers) {
+    try {
+      cb();
+    } catch {}
+  }
+}
+
 export function getCustomBaseRoutes(): ManagedRoute[] {
   const pointMap = new Map(
     STATIC_CUSTOM_POINTS.map((p) => [p.point_id, p])
@@ -236,16 +332,35 @@ export function getCustomBaseRoutes(): ManagedRoute[] {
       .map((s) => s.segment_name)
       .filter(Boolean) as string[];
 
-    const totalFare = data.segments.reduce(
-      (acc, s) => acc + (s.fare || 0),
-      0
-    );
+    const hasTricycle = vehicleTypes.includes("tricycle");
+    const sharedTotal = data.segments.reduce((acc, s) => {
+      if (s.segment_type === "walk") return acc;
+      const leg =
+        s.fare ??
+        (s.segment_type === "tricycle"
+          ? 15
+          : s.segment_type === "bus"
+            ? 35
+            : 14);
+      return acc + Math.ceil(Number(leg));
+    }, 0);
+
+    const soloTotal = data.segments.reduce((acc, s) => {
+      if (s.segment_type === "walk") return acc;
+      if (s.segment_type === "tricycle") return acc + 50;
+      const leg = s.fare ?? (s.segment_type === "bus" ? 35 : 14);
+      return acc + Math.ceil(Number(leg));
+    }, 0);
 
     let vehicleType: "jeepney" | "bus" | "tricycle" = "jeepney";
     if (vehicleTypes.includes("bus")) vehicleType = "bus";
     else if (vehicleTypes.includes("tricycle") && !vehicleTypes.includes("jeepney")) {
       vehicleType = "tricycle";
     }
+
+    const defaultFareText = hasTricycle
+      ? `₱${sharedTotal} shared · ₱${soloTotal} solo`
+      : `Php ${sharedTotal.toFixed(2)}`;
 
     routes.push({
       routeId: itinId,
@@ -254,7 +369,10 @@ export function getCustomBaseRoutes(): ManagedRoute[] {
       destination: destPoint?.name || "DLSAU Main Campus",
       vehicleType,
       landmarks,
-      fareText: totalFare > 0 ? `₱${totalFare.toFixed(2)}` : "₱15.00 - ₱30.00",
+      fareText: defaultFareText,
+      customFare: sharedTotal,
+      customSoloFare: hasTricycle ? soloTotal : null,
+      hasTricycle,
       status: "active",
       lastUpdated: new Date().toISOString(),
       verifiedBy: "DLSAU Transit Administration",
@@ -272,12 +390,29 @@ export async function getManagedRoutes(): Promise<ManagedRoute[]> {
     if (raw) {
       const overrides: ManagedRoute[] = JSON.parse(raw);
       if (Array.isArray(overrides)) {
-        return baseRoutes.map((base) => {
-          const matched = overrides.find((o) => o.routeId === base.routeId);
+        const mergedBase = baseRoutes.map((base) => {
+          const matched = overrides.find(
+            (o) =>
+              o.routeId === base.routeId ||
+              o.routeName?.trim().toLowerCase() === base.routeName.trim().toLowerCase()
+          );
           if (matched) {
             return {
               ...base,
-              status: matched.status,
+              fareText: matched.fareText || base.fareText,
+              customFare:
+                matched.customFare !== undefined ? matched.customFare : base.customFare,
+              customSoloFare:
+                matched.customSoloFare !== undefined
+                  ? matched.customSoloFare
+                  : base.customSoloFare,
+              hasTricycle:
+                matched.hasTricycle !== undefined ? matched.hasTricycle : base.hasTricycle,
+              landmarks:
+                Array.isArray(matched.landmarks) && matched.landmarks.length > 0
+                  ? matched.landmarks
+                  : base.landmarks,
+              status: matched.status || base.status,
               statusNotice: matched.statusNotice,
               lastUpdated: matched.lastUpdated || base.lastUpdated,
               verifiedBy: matched.verifiedBy || base.verifiedBy,
@@ -285,15 +420,46 @@ export async function getManagedRoutes(): Promise<ManagedRoute[]> {
           }
           return base;
         });
+
+        // Append any custom routes created by an admin
+        const baseIds = new Set(baseRoutes.map((b) => b.routeId));
+        const adminAddedRoutes = overrides.filter(
+          (o) => o && o.routeId && !baseIds.has(o.routeId)
+        );
+        const result = [...mergedBase, ...adminAddedRoutes];
+        cachedManagedRoutes = result;
+        return result;
       }
     }
   } catch {}
 
+  cachedManagedRoutes = baseRoutes;
   return baseRoutes;
 }
 
+export function getCachedRouteOverride(
+  routeIdOrName?: string | null
+): ManagedRoute | null {
+  if (!routeIdOrName || !cachedManagedRoutes) return null;
+  const cleaned = routeIdOrName.replace(/^custom:/i, "").trim().toLowerCase();
+  return (
+    cachedManagedRoutes.find(
+      (r) =>
+        r.routeId.trim().toLowerCase() === cleaned ||
+        r.routeName.trim().toLowerCase() === cleaned
+    ) ?? null
+  );
+}
+
+export function getCachedAdminAddedRoutes(): ManagedRoute[] {
+  if (!cachedManagedRoutes) return [];
+  return cachedManagedRoutes.filter((r) => r.isCustomAdminRoute);
+}
+
 export async function saveManagedRoutes(routes: ManagedRoute[]): Promise<void> {
+  cachedManagedRoutes = routes;
   await AsyncStorage.setItem(STORAGE_KEYS.ROUTES, JSON.stringify(routes));
+  notifyManagedRoutesChanged();
 }
 
 export async function getFreshmenGuides(): Promise<FreshmenGuide[]> {

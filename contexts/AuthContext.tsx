@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 
-import type { UserRole } from "@/lib/adminAndFeedback";
+import { recordRegisteredUser, type UserRole } from "@/lib/adminAndFeedback";
 import { revokeSessionOnServerBestEffort, supabase } from "@/lib/supabase";
 import { clearSupabaseAuthStorage } from "@/lib/supabase-auth-storage";
 
@@ -72,11 +72,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const userEmail = currentSession.user.email?.toLowerCase().trim();
     const initialAdminEmail = process.env.EXPO_PUBLIC_INITIAL_ADMIN_EMAIL?.toLowerCase().trim();
+    const fullName =
+      (currentSession.user.user_metadata?.full_name as string | undefined) ||
+      (currentSession.user.user_metadata?.name as string | undefined) ||
+      userEmail?.split("@")[0] ||
+      "Registered User";
 
     // 1. Check if user matches designated initial admin email from env
     if (initialAdminEmail && userEmail === initialAdminEmail) {
       setUserRoleState("admin");
       await AsyncStorage.setItem(`tara:user:role:${currentSession.user.id}`, "admin").catch(() => {});
+      void recordRegisteredUser({
+        id: currentSession.user.id,
+        email: userEmail,
+        fullName,
+        role: "admin",
+        joinedAt: currentSession.user.created_at,
+      });
       return;
     }
 
@@ -91,16 +103,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (profile?.role === "admin" || profile?.role === "user" || profile?.role === "guest") {
         setUserRoleState(profile.role);
         await AsyncStorage.setItem(`tara:user:role:${currentSession.user.id}`, profile.role).catch(() => {});
+        if (userEmail) {
+          void recordRegisteredUser({
+            id: currentSession.user.id,
+            email: userEmail,
+            fullName,
+            role: profile.role,
+            joinedAt: currentSession.user.created_at,
+          });
+        }
         return;
-      } else if (!profile && currentSession.user.id) {
+      } else if (!profile && currentSession.user.id && userEmail) {
         // Ensure profile record exists in public.profiles so administrator can manage it
-        await supabase.from("profiles").upsert({
+        void recordRegisteredUser({
           id: currentSession.user.id,
-          email: currentSession.user.email,
+          email: userEmail,
+          fullName,
           role: "user",
-          full_name: currentSession.user.user_metadata?.full_name || currentSession.user.email?.split("@")[0] || "Registered User",
-          created_at: currentSession.user.created_at || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          joinedAt: currentSession.user.created_at,
         });
       }
     } catch {}

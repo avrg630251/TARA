@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { LatLng } from "@/lib/googleMapsRoutes";
+import { getCachedRouteOverride } from "@/lib/adminAndFeedback";
 
 export type DiscountCode = "regular" | "discounted";
 
@@ -187,6 +188,42 @@ export function normalizeTravelFare(item: NormalizeTravelFareArgs): {
 } {
   const isDiscounted = item.discountCode === "discounted";
   const textHaystack = `${item.routeName ?? ""} ${item.originLabel ?? ""} ${item.destinationLabel ?? ""} ${item.boardStop ?? ""} ${item.offStop ?? ""} ${item.fareText ?? ""}`.toLowerCase();
+
+  // Check if an administrator has modified the fare for this route
+  const adminOverride = getCachedRouteOverride(item.routeName);
+  if (
+    adminOverride &&
+    typeof adminOverride.customFare === "number" &&
+    Number.isFinite(adminOverride.customFare) &&
+    adminOverride.customFare > 0
+  ) {
+    const baseShared = Math.ceil(adminOverride.customFare);
+    const discountedShared = isDiscounted
+      ? Math.ceil(baseShared * 0.8)
+      : baseShared;
+
+    if (
+      adminOverride.hasTricycle ||
+      adminOverride.vehicleType === "tricycle" ||
+      (typeof adminOverride.customSoloFare === "number" &&
+        adminOverride.customSoloFare > 0)
+    ) {
+      const soloVal =
+        typeof adminOverride.customSoloFare === "number" &&
+        adminOverride.customSoloFare > 0
+          ? Math.ceil(adminOverride.customSoloFare)
+          : TRICYCLE_SOLO_FARE_PHP;
+      return {
+        fareText: `₱${discountedShared} shared · ₱${soloVal} solo`,
+        fareValue: discountedShared,
+      };
+    }
+
+    return {
+      fareText: `Php ${discountedShared.toFixed(2)}`,
+      fareValue: discountedShared,
+    };
+  }
 
   const hasTrikeInSegments = item.segments?.some((s) => s.segmentType === "tricycle");
   const mentionsTrike =

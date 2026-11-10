@@ -37,8 +37,14 @@ import {
   type AndroidPlaceAutocompleteHandle,
 } from "@/components/AndroidPlaceAutocomplete";
 import { FullScreenMap } from "@/components/FullScreenMap";
+import { TransitVehicleIcon } from "@/components/TransitVehicleIcon";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTravel } from "@/contexts/TravelContext";
+import {
+  getCachedRouteOverride,
+  getManagedRoutes,
+  subscribeToManagedRoutes,
+} from "@/lib/adminAndFeedback";
 import * as googleMapsRoutes from "@/lib/googleMapsRoutes";
 import {
   geocodeAddress,
@@ -283,7 +289,7 @@ function CommuterTipsCard() {
     <View style={styles.commuterTipsCard}>
       <View style={styles.commuterTipsHeader}>
         <Ionicons name="information-circle-outline" size={17} color="#B45309" />
-        <Text style={styles.commuterTipsTitle}>Commuter Advisories</Text>
+        <Text style={styles.commuterTipsTitle}>Commuter Tips</Text>
       </View>
       {COMMUTER_TIPS.map((tip, idx) => (
         <View key={idx} style={styles.commuterTipItem}>
@@ -410,6 +416,19 @@ export default function SearchMapScreen() {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const [sheetContentHeight, setSheetContentHeight] = useState<number | null>(null);
+  const [whereCardBottom, setWhereCardBottom] = useState<number>(0);
+  const [commuterTipsExpanded, setCommuterTipsExpanded] = useState<boolean>(true);
+  const [managedRoutesTick, setManagedRoutesTick] = useState(0);
+
+  useEffect(() => {
+    void getManagedRoutes().then(() => {
+      setManagedRoutesTick((t) => t + 1);
+    });
+    const unsub = subscribeToManagedRoutes(() => {
+      setManagedRoutesTick((t) => t + 1);
+    });
+    return unsub;
+  }, []);
 
   const handleContentLayout = useCallback((height: number) => {
     const rounded = Math.ceil(height);
@@ -423,23 +442,30 @@ export default function SearchMapScreen() {
     }
   }, []);
 
+  // Ensure the entire pull-up bottom sheet + Commuter Tips panel & pill above it
+  // NEVER overlaps or covers the top "Where to?" search card section.
+  const minTopClearance = Math.max(
+    whereCardBottom > 0 ? whereCardBottom + 14 : insets.top + 225,
+    insets.top + 210
+  );
+  const maxAllowedSheetHeight = Math.max(
+    220,
+    windowHeight - minTopClearance
+  );
   const collapsedSheetHeight = Math.min(
-    Math.max(windowHeight * 0.26, 220),
-    windowHeight * 0.38
+    maxAllowedSheetHeight,
+    Math.min(Math.max(windowHeight * 0.36, 275), windowHeight * 0.44)
   );
-  const maxAllowedSheetHeight = Math.min(
-    windowHeight * 0.78,
-    Math.max(collapsedSheetHeight + 80, windowHeight - insets.top - 90)
-  );
+  const tipsExtraHeight = commuterTipsExpanded ? 175 : 105;
   const expandedSheetHeight = sheetContentHeight
     ? Math.min(
         maxAllowedSheetHeight,
-        Math.max(collapsedSheetHeight + 40, sheetContentHeight + 66 + insets.bottom)
+        Math.max(
+          collapsedSheetHeight,
+          sheetContentHeight + tipsExtraHeight + 56 + insets.bottom
+        )
       )
-    : Math.min(
-        maxAllowedSheetHeight,
-        Math.max(windowHeight * 0.52, 400)
-      );
+    : maxAllowedSheetHeight;
   const maxSheetTranslateY = Math.max(0, expandedSheetHeight - collapsedSheetHeight);
   const sheetTranslateY = useRef(new Animated.Value(maxSheetTranslateY)).current;
   const sheetOffsetRef = useRef(maxSheetTranslateY);
@@ -690,19 +716,24 @@ export default function SearchMapScreen() {
   }, [activeInput, originLabel, latitude, longitude]);
 
   const routes = useMemo<DisplayRoutePlan[]>(() => {
+    void managedRoutesTick;
     const withFares = routePlans.map((p) => {
+      const adminOverride =
+        getCachedRouteOverride(p.id) || getCachedRouteOverride(p.routeName);
       const updatedSegments = p.segments?.map((segment) => ({
         ...segment,
         fare: fareForSegment(segment),
       }));
       const hasTricycle =
+        Boolean(adminOverride?.hasTricycle) ||
+        adminOverride?.vehicleType === "tricycle" ||
         updatedSegments?.some(
           (segment) => segment.segmentType === "tricycle"
         ) ||
         /tricycle|trike/i.test(p.routeName) ||
         /tricycle|trike/i.test(p.googleSummary ?? "");
 
-      const sharedFare = updatedSegments?.length
+      const computedShared = updatedSegments?.length
         ? Math.ceil(
             updatedSegments.reduce(
               (total, segment) => total + fareForSegment(segment, "shared"),
@@ -711,7 +742,16 @@ export default function SearchMapScreen() {
           )
         : null;
 
-      const soloFare =
+      const sharedFare =
+        adminOverride?.customFare != null &&
+        Number.isFinite(adminOverride.customFare)
+          ? Math.ceil(
+              adminOverride.customFare *
+                (discountCode === "discounted" ? 0.8 : 1)
+            )
+          : computedShared;
+
+      const computedSolo =
         updatedSegments?.length && hasTricycle
           ? Math.ceil(
               updatedSegments.reduce((total, segment) => {
@@ -731,6 +771,12 @@ export default function SearchMapScreen() {
           : hasTricycle
             ? TRICYCLE_SOLO_FARE_PHP
             : null;
+
+      const soloFare =
+        adminOverride?.customSoloFare != null &&
+        Number.isFinite(adminOverride.customSoloFare)
+          ? Math.ceil(adminOverride.customSoloFare)
+          : computedSolo;
 
       const flatFare = computeFlatFareForTrip({
         transferCount: p.transferCount,
@@ -789,7 +835,7 @@ export default function SearchMapScreen() {
     }
 
     return filter === "all" ? ordered : ordered.slice(0, 1);
-  }, [routePlans, discountCode, filter, classSchedules]);
+  }, [routePlans, discountCode, filter, classSchedules, managedRoutesTick]);
 
   const routeAlternativesForMap = useMemo(() => {
     if (!routes.some((r) => r.polyline.length > 1)) return undefined;
@@ -1709,7 +1755,6 @@ export default function SearchMapScreen() {
 
     let modeTitle = "Walking";
     let modeBadge = "Walk";
-    let iconName: keyof typeof Ionicons.glyphMap = "walk-outline";
     let badgeBg = "#F1F5F9";
     let badgeBorder = "#E2E8F0";
     let badgeColor = "#475569";
@@ -1717,21 +1762,18 @@ export default function SearchMapScreen() {
     if (isJeepney) {
       modeTitle = "Jeepney";
       modeBadge = "Jeepney";
-      iconName = "bus-outline";
       badgeBg = "#E0F2FE";
       badgeBorder = "#BAE6FD";
       badgeColor = "#0284C7";
     } else if (isTricycle) {
       modeTitle = "Tricycle";
       modeBadge = "Tricycle";
-      iconName = "bicycle-outline";
       badgeBg = "#FEF3C7";
       badgeBorder = "#FDE68A";
       badgeColor = "#D97706";
     } else if (isBus) {
       modeTitle = "Bus";
       modeBadge = "Bus";
-      iconName = "bus-outline";
       badgeBg = "#F3E8FF";
       badgeBorder = "#E9D5FF";
       badgeColor = "#7E22CE";
@@ -1747,25 +1789,42 @@ export default function SearchMapScreen() {
     const distMeters = polylineDistanceMeters(selectedSegment.coordinates);
     const distanceText = distMeters > 0 ? formatDistance(distMeters) : null;
 
+    const activeOverride = selectedMapPlan
+      ? getCachedRouteOverride(selectedMapPlan.id) ||
+        getCachedRouteOverride(selectedMapPlan.routeName)
+      : undefined;
+    const transitSegCount =
+      selectedMapPlan?.segments?.filter((s) => s.segmentType !== "walk").length || 1;
+
     // Fare calculation
     let fareText = "Free";
     if (isTricycle) {
+      const baseShared =
+        transitSegCount === 1 && activeOverride?.customFare != null
+          ? activeOverride.customFare
+          : selectedSegment.fare ?? TRICYCLE_SHARED_FARE_PHP;
       const shared = Math.ceil(
-        discountCode === "discounted"
-          ? TRICYCLE_SHARED_FARE_PHP * 0.8
-          : TRICYCLE_SHARED_FARE_PHP
+        discountCode === "discounted" ? baseShared * 0.8 : baseShared
       );
-      const solo = TRICYCLE_SOLO_FARE_PHP;
+      const solo =
+        transitSegCount === 1 && activeOverride?.customSoloFare != null
+          ? Math.ceil(activeOverride.customSoloFare)
+          : TRICYCLE_SOLO_FARE_PHP;
       fareText = `₱${shared} shared · ₱${solo} solo`;
     } else if (isBus) {
+      const baseBus =
+        transitSegCount === 1 && activeOverride?.customFare != null
+          ? activeOverride.customFare
+          : selectedSegment.fare ?? BUS_BASE_FARE_PHP;
       const busFare = Math.ceil(
-        discountCode === "discounted"
-          ? BUS_BASE_FARE_PHP * 0.8
-          : BUS_BASE_FARE_PHP
+        discountCode === "discounted" ? baseBus * 0.8 : baseBus
       );
       fareText = `₱${busFare}`;
     } else if (isJeepney) {
-      const rawFare = selectedSegment.fare ?? computeJeepneyFare(distMeters);
+      const rawFare =
+        transitSegCount === 1 && activeOverride?.customFare != null
+          ? activeOverride.customFare
+          : selectedSegment.fare ?? computeJeepneyFare(distMeters);
       const finalFare = Math.ceil(
         discountCode === "discounted" ? rawFare * 0.8 : rawFare
       );
@@ -1803,7 +1862,11 @@ export default function SearchMapScreen() {
               { backgroundColor: badgeBg, borderColor: badgeBorder },
             ]}
           >
-            <Ionicons name={iconName} size={13} color={badgeColor} />
+            <TransitVehicleIcon
+              type={selectedSegment.segmentType}
+              size={15}
+              color={badgeColor}
+            />
             <Text style={[styles.segmentBadgeText, { color: badgeColor }]}>
               {modeBadge}
             </Text>
@@ -2003,7 +2066,13 @@ export default function SearchMapScreen() {
           ) : null}
 
           {!tripDetailsExpanded ? (
-            <View style={styles.tripCollapsedContainer} pointerEvents="box-none">
+            <View
+              style={[
+                styles.tripCollapsedContainer,
+                { bottom: 12 + Math.max(insets.bottom, 6) },
+              ]}
+              pointerEvents="box-none"
+            >
               <View style={styles.tripCollapsedCard}>
                 <View style={styles.tripCollapsedTopRow}>
                   <View style={styles.tripCollapsedBadge}>
@@ -2247,8 +2316,19 @@ export default function SearchMapScreen() {
       ) : null}
 
       {!tripActivePlan ? (
-      <SafeAreaView style={styles.topSafe} edges={["top"]} pointerEvents="box-none">
-        <View style={styles.whereCard} pointerEvents="auto">
+      <SafeAreaView
+        style={styles.topSafe}
+        edges={["top"]}
+        pointerEvents="box-none"
+      >
+        <View
+          style={styles.whereCard}
+          pointerEvents="auto"
+          onLayout={(e) => {
+            const bottom = e.nativeEvent.layout.y + e.nativeEvent.layout.height;
+            setWhereCardBottom(bottom);
+          }}
+        >
           <View style={styles.whereHeader}>
             <Pressable
               onPress={() => router.navigate("/(main)")}
@@ -2378,39 +2458,104 @@ export default function SearchMapScreen() {
           styles.bottomSheet,
           {
             height: expandedSheetHeight,
-            paddingBottom: 20 + insets.bottom,
             transform: [{ translateY: sheetTranslateY }],
           },
         ]}
+        pointerEvents="box-none"
       >
-        <View
-          style={styles.sheetDragHeader}
-          {...sheetPanResponder.panHandlers}
-        >
+        {/* Floating "COMMUTER TIPS" Pill Tab above top-left of Pull Tab (matches reference layout) */}
+        <View style={styles.commuterTipsFloatingRow} pointerEvents="box-none">
           <Pressable
-            style={styles.grabberHitbox}
-            onPress={() => snapSheet(!sheetExpanded)}
+            style={({ pressed }) => [
+              styles.commuterTipsFloatingPill,
+              pressed && styles.pressed,
+            ]}
+            onPress={() => setCommuterTipsExpanded((prev) => !prev)}
             accessibilityRole="button"
-            accessibilityLabel={
-              sheetExpanded
-                ? "Collapse available routes panel"
-                : "Expand available routes panel"
-            }
+            accessibilityLabel="Toggle Commuter Tips panel"
           >
-          <View style={styles.grabber} />
+            <Ionicons name="bulb" size={14} color={GREEN} />
+            <Text style={styles.commuterTipsFloatingPillText}>COMMUTER TIPS</Text>
+            <Ionicons
+              name={commuterTipsExpanded ? "chevron-down" : "chevron-up"}
+              size={14}
+              color="#475569"
+            />
           </Pressable>
         </View>
-        <ScrollView
-          style={styles.sheetScroll}
-          contentContainerStyle={styles.sheetContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          bounces={false}
-          overScrollMode="never"
-          onContentSizeChange={(_, h) => handleContentLayout(h)}
-        >
-          <View onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}>
-            <Text style={styles.sheetTitle}>Available Routes</Text>
+
+        {/* Dedicated Pull-Tab Top Panel for Commuter Tips + White Rounded Available Routes Card */}
+        <View style={styles.commuterTipsPullPanel}>
+          <View
+            style={styles.commuterTipsTopBanner}
+            {...sheetPanResponder.panHandlers}
+          >
+            <Pressable
+              style={styles.grabberHitbox}
+              onPress={() => snapSheet(!sheetExpanded)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                sheetExpanded
+                  ? "Collapse available routes panel"
+                  : "Expand available routes panel"
+              }
+            >
+              <View style={styles.grabberLight} />
+            </Pressable>
+
+            <Pressable
+              style={styles.commuterTipsPanelBody}
+              onPress={() => setCommuterTipsExpanded((prev) => !prev)}
+            >
+              <View style={styles.commuterTipsPanelHeaderRow}>
+                <View style={styles.commuterTipsPanelBadge}>
+                  <Ionicons name="bulb-outline" size={14} color="#FDE68A" />
+                  <Text style={styles.commuterTipsPanelTitle}>
+                    Commuter Tips
+                  </Text>
+                </View>
+                <Text style={styles.commuterTipsPanelToggleText}>
+                  {commuterTipsExpanded ? "Hide tips" : "Show all 4 tips"}
+                </Text>
+              </View>
+
+              {commuterTipsExpanded ? (
+                <View style={styles.commuterTipsPanelList}>
+                  {COMMUTER_TIPS.map((tip, idx) => (
+                    <View key={idx} style={styles.commuterTipsPanelItem}>
+                      <Text style={styles.commuterTipsPanelBullet}>•</Text>
+                      <Text style={styles.commuterTipsPanelText}>{tip}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text
+                  style={styles.commuterTipsPanelSingleText}
+                  numberOfLines={1}
+                >
+                  {COMMUTER_TIPS[0]}
+                </Text>
+              )}
+            </Pressable>
+          </View>
+
+          <View
+            style={[
+              styles.availableRoutesBodySheet,
+              { paddingBottom: 20 + insets.bottom },
+            ]}
+          >
+            <ScrollView
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              bounces={false}
+              overScrollMode="never"
+              onContentSizeChange={(_, h) => handleContentLayout(h)}
+            >
+              <View onLayout={(e) => handleContentLayout(e.nativeEvent.layout.height)}>
+                <Text style={styles.sheetTitle}>Available Routes</Text>
           {scheduleWarning ? (
             <View style={styles.scheduleWarning}>
               <View style={styles.scheduleWarningHeader}>
@@ -2719,25 +2864,42 @@ export default function SearchMapScreen() {
                     modeText = "Bus";
                   }
 
+                  const activeOverride = selectedMapPlan
+                    ? getCachedRouteOverride(selectedMapPlan.id) ||
+                      getCachedRouteOverride(selectedMapPlan.routeName)
+                    : undefined;
+                  const transitCount =
+                    rideDetailSegments.filter((s) => s.segmentType !== "walk").length || 1;
+
                   let fareText: string | null = null;
                   if (segment.segmentType === "tricycle") {
+                    const baseShared =
+                      transitCount === 1 && activeOverride?.customFare != null
+                        ? activeOverride.customFare
+                        : segment.fare ?? TRICYCLE_SHARED_FARE_PHP;
                     const shared = Math.ceil(
-                      discountCode === "discounted"
-                        ? TRICYCLE_SHARED_FARE_PHP * 0.8
-                        : TRICYCLE_SHARED_FARE_PHP
+                      discountCode === "discounted" ? baseShared * 0.8 : baseShared
                     );
-                    const solo = TRICYCLE_SOLO_FARE_PHP;
+                    const solo =
+                      transitCount === 1 && activeOverride?.customSoloFare != null
+                        ? Math.ceil(activeOverride.customSoloFare)
+                        : TRICYCLE_SOLO_FARE_PHP;
                     fareText = `₱${shared} shared · ₱${solo} solo`;
                   } else if (segment.segmentType === "bus") {
+                    const baseBus =
+                      transitCount === 1 && activeOverride?.customFare != null
+                        ? activeOverride.customFare
+                        : segment.fare ?? BUS_BASE_FARE_PHP;
                     const busFare = Math.ceil(
-                      discountCode === "discounted"
-                        ? BUS_BASE_FARE_PHP * 0.8
-                        : BUS_BASE_FARE_PHP
+                      discountCode === "discounted" ? baseBus * 0.8 : baseBus
                     );
                     fareText = `₱${busFare}`;
                   } else if (segment.segmentType === "jeepney") {
                     const distMeters = polylineDistanceMeters(segment.coordinates);
-                    const rawFare = segment.fare ?? computeJeepneyFare(distMeters);
+                    const rawFare =
+                      transitCount === 1 && activeOverride?.customFare != null
+                        ? activeOverride.customFare
+                        : segment.fare ?? computeJeepneyFare(distMeters);
                     const finalFare = Math.ceil(
                       discountCode === "discounted" ? rawFare * 0.8 : rawFare
                     );
@@ -2794,12 +2956,13 @@ export default function SearchMapScreen() {
                   );
                 })}
                 </View>
-                <CommuterTipsCard />
               </>
             );
           })()}
+              </View>
+            </ScrollView>
           </View>
-        </ScrollView>
+        </View>
       </Animated.View>
       ) : null}
 
@@ -3111,17 +3274,119 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#fdfefd",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    backgroundColor: "transparent",
+    zIndex: 3,
+  },
+  commuterTipsFloatingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  commuterTipsFloatingPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.14,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  commuterTipsFloatingPillText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#0F172A",
+    letterSpacing: 0.5,
+  },
+  commuterTipsPullPanel: {
+    flex: 1,
+    backgroundColor: GREEN,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.14,
     shadowRadius: 8,
     elevation: 12,
-    zIndex: 3,
+    overflow: "hidden",
+  },
+  commuterTipsTopBanner: {
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 12,
+    backgroundColor: GREEN,
+  },
+  grabberLight: {
+    alignSelf: "center",
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255, 255, 255, 0.85)",
+  },
+  commuterTipsPanelBody: {
+    marginTop: 2,
+  },
+  commuterTipsPanelHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 5,
+  },
+  commuterTipsPanelBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  commuterTipsPanelTitle: {
+    fontSize: 13.5,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: 0.2,
+  },
+  commuterTipsPanelToggleText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#A7F3D0",
+  },
+  commuterTipsPanelList: {
+    gap: 3,
+  },
+  commuterTipsPanelItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+  },
+  commuterTipsPanelBullet: {
+    fontSize: 12,
+    color: "#FDE68A",
+    lineHeight: 16,
+    fontWeight: "700",
+  },
+  commuterTipsPanelText: {
+    fontSize: 12,
+    color: "#ECFDF5",
+    lineHeight: 16,
+    flex: 1,
+  },
+  commuterTipsPanelSingleText: {
+    fontSize: 12.5,
+    color: "#ECFDF5",
+    lineHeight: 17,
+  },
+  availableRoutesBodySheet: {
+    flex: 1,
+    backgroundColor: "#fdfefd",
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 16,
+    paddingTop: 14,
     overflow: "hidden",
   },
   sheetScroll: {
@@ -3140,7 +3405,7 @@ const styles = StyleSheet.create({
   grabberHitbox: {
     alignSelf: "center",
     paddingTop: 4,
-    paddingBottom: 12,
+    paddingBottom: 6,
     paddingHorizontal: 40,
   },
   sheetDragHeader: {

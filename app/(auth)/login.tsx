@@ -20,10 +20,12 @@ export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [needsOtpVerify, setNeedsOtpVerify] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function onSubmit() {
     setError(null);
+    setNeedsOtpVerify(false);
     const trimmed = email.trim();
     if (!trimmed || !password) {
       setError("Enter your email and password.");
@@ -39,7 +41,23 @@ export default function LoginScreen() {
     setSubmitting(false);
 
     if (signInError) {
-      setError(signInError.message);
+      const msg = (signInError.message || "").toLowerCase();
+      if (msg.includes("email not confirmed")) {
+        setNeedsOtpVerify(true);
+        setError(
+          "Your email address has not been verified yet. Please enter the 6-digit OTP code sent to your email."
+        );
+      } else if (
+        signInError.status === 429 ||
+        msg.includes("rate limit") ||
+        msg.includes("email rate exceeded")
+      ) {
+        setError(
+          "Too many sign-in or email attempts. Please wait a minute before trying again."
+        );
+      } else {
+        setError(signInError.message);
+      }
       return;
     }
 
@@ -92,6 +110,25 @@ export default function LoginScreen() {
           </Pressable>
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          {needsOtpVerify ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.verifyOtpBtn,
+                pressed && { opacity: 0.8 },
+              ]}
+              onPress={() =>
+                router.push({
+                  pathname: "/signup",
+                  params: { step: "otp", email: email.trim() },
+                } as any)
+              }
+            >
+              <Text style={styles.verifyOtpBtnText}>
+                Enter 6-Digit Verification OTP
+              </Text>
+            </Pressable>
+          ) : null}
 
           <Pressable
             style={({ pressed }) => [
@@ -202,6 +239,20 @@ const styles = StyleSheet.create({
     color: "#dc2626",
     fontSize: 14,
     marginBottom: 12,
+  },
+  verifyOtpBtn: {
+    backgroundColor: "#f0fdf4",
+    borderWidth: 1,
+    borderColor: "#16a34a",
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  verifyOtpBtnText: {
+    color: "#15803d",
+    fontSize: 14,
+    fontWeight: "700",
   },
   primaryBtn: {
     backgroundColor: "#1C5141",

@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Tabs, useRouter } from "expo-router";
 import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 import { useEffect } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { TravelProvider } from "@/contexts/TravelContext";
@@ -11,6 +12,9 @@ const GREEN = "#1B4332";
 export default function MainLayout() {
   const { session, loading, isAdmin, isGuest } = useAuth();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, Platform.OS === "ios" ? 20 : 12);
+  const tabBarHeight = 56 + bottomInset;
 
   useEffect(() => {
     if (!loading && !session && !isGuest) {
@@ -46,9 +50,9 @@ export default function MainLayout() {
             borderTopWidth: 1,
             borderTopColor: "#e9ecef",
             backgroundColor: "#fff",
-            height: Platform.OS === "ios" ? 82 : 60,
+            height: tabBarHeight,
             paddingTop: 6,
-            paddingBottom: Platform.OS === "ios" ? 22 : 6,
+            paddingBottom: bottomInset,
           },
         }}
       >

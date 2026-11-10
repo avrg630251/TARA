@@ -1,6 +1,6 @@
 import * as Linking from "expo-linking";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -62,10 +62,20 @@ export default function ForgotPasswordScreen() {
   const [showCodeSection, setShowCodeSection] = useState(false);
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownSeconds((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownSeconds]);
+
   async function handleSendResetEmail() {
+    if (cooldownSeconds > 0 || sending) return;
     setError(null);
     setInfo(null);
 
@@ -89,14 +99,29 @@ export default function ForgotPasswordScreen() {
     setSending(false);
 
     if (resetError) {
+      const msg = (resetError.message || "").toLowerCase();
+      if (
+        resetError.status === 429 ||
+        msg.includes("rate limit") ||
+        msg.includes("email rate exceeded") ||
+        msg.includes("over_email_send_rate_limit")
+      ) {
+        setCooldownSeconds(60);
+        setShowCodeSection(true);
+        setInfo(
+          "A recovery email was recently sent. Please check your inbox (and spam folder) for your 6-digit recovery OTP code and enter it below, or wait 60 seconds before requesting another email."
+        );
+        return;
+      }
       setError(resetError.message);
       return;
     }
 
     setEmailSent(true);
     setShowCodeSection(true);
+    setCooldownSeconds(60);
     setInfo(
-      `Password reset instructions were sent to ${trimmedEmail}. Open the reset link in your email, or enter the recovery code or reset link below.`
+      `Password reset instructions were sent to ${trimmedEmail}. Enter the 6-digit recovery OTP code (or reset link) from your email below.`
     );
   }
 
@@ -234,16 +259,20 @@ export default function ForgotPasswordScreen() {
             style={({ pressed }) => [
               styles.primaryBtn,
               pressed && styles.primaryBtnPressed,
-              sending && styles.primaryBtnDisabled,
+              (sending || cooldownSeconds > 0) && styles.primaryBtnDisabled,
             ]}
             onPress={handleSendResetEmail}
-            disabled={sending || verifying}
+            disabled={sending || verifying || cooldownSeconds > 0}
           >
             {sending ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.primaryBtnText}>
-                {emailSent ? "Resend Reset Email" : "Send Reset Email"}
+                {cooldownSeconds > 0
+                  ? `Resend Available in ${cooldownSeconds}s`
+                  : emailSent
+                    ? "Resend Reset Email"
+                    : "Send Reset Email"}
               </Text>
             )}
           </Pressable>

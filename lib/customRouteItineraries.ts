@@ -3,6 +3,11 @@ import {
   STATIC_CUSTOM_POINTS,
   STATIC_CUSTOM_SEGMENTS,
 } from "@/lib/customRoutesStatic";
+import {
+  getCachedAdminAddedRoutes,
+  getCachedRouteOverride,
+  getManagedRoutes,
+} from "@/lib/adminAndFeedback";
 
 export type CustomRoutePoint = {
   point_id: string;
@@ -160,6 +165,34 @@ function computeNearestCustomItineraries(
       );
     }
 
+    const override = getCachedRouteOverride(
+      nearest.terminal.itinerary_id || orderedSegments[0]?.itinerary_name
+    );
+
+    if (override?.status === "suspended") {
+      continue;
+    }
+
+    const computedDefaultFare = orderedSegments.reduce(
+      (total, segment) => {
+        if (segment.segment_type === "walk") return total;
+        const legFare =
+          segment.fare ??
+          (segment.segment_type === "tricycle"
+            ? 15
+            : segment.segment_type === "bus"
+              ? 35
+              : 14);
+        return total + Math.ceil(legFare);
+      },
+      0
+    );
+
+    const effectiveFare =
+      override?.customFare != null && Number.isFinite(override.customFare)
+        ? Math.ceil(override.customFare)
+        : computedDefaultFare;
+
     results.push({
       origin: nearest.terminal,
       boardingName,
@@ -167,20 +200,88 @@ function computeNearestCustomItineraries(
       destination,
       segments: orderedSegments,
       coordinates,
-      fare: orderedSegments.reduce(
-        (total, segment) => {
-          if (segment.segment_type === "walk") return total;
-          const legFare =
-            segment.fare ??
-            (segment.segment_type === "tricycle"
-              ? 15
-              : segment.segment_type === "bus"
-                ? 35
-                : 14);
-          return total + Math.ceil(legFare);
-        },
-        0
-      ),
+      fare: effectiveFare,
+    });
+  }
+
+  // Also include any custom routes added by an admin that are active
+  const adminAdded = getCachedAdminAddedRoutes().filter(
+    (r) => r.status !== "suspended"
+  );
+  for (const ar of adminAdded) {
+    const startLat = ar.originLat ?? origin.latitude;
+    const startLng = ar.originLng ?? origin.longitude;
+    const destLat = 14.670567;
+    const destLng = 120.999293;
+    const fareVal =
+      ar.customFare != null && Number.isFinite(ar.customFare)
+        ? Math.ceil(ar.customFare)
+        : ar.vehicleType === "bus"
+          ? 35
+          : ar.vehicleType === "tricycle"
+            ? 15
+            : 14;
+
+    const originPt: CustomRoutePoint = {
+      point_id: `pt_orig_${ar.routeId}`,
+      point_type: "terminal",
+      terminal_role: "origin",
+      name: ar.origin,
+      instruction: ar.signboard || null,
+      itinerary_id: ar.routeId,
+      itinerary_name: ar.routeName,
+      destination_id: `pt_dest_${ar.routeId}`,
+      point_sequence: 1,
+      latitude: startLat,
+      longitude: startLng,
+    };
+    const destPt: CustomRoutePoint = {
+      point_id: `pt_dest_${ar.routeId}`,
+      point_type: "destination",
+      terminal_role: null,
+      name: ar.destination || "De La Salle Araneta University",
+      instruction: null,
+      itinerary_id: ar.routeId,
+      itinerary_name: ar.routeName,
+      destination_id: `pt_dest_${ar.routeId}`,
+      point_sequence: 2,
+      latitude: destLat,
+      longitude: destLng,
+    };
+    const seg: CustomRouteSegment = {
+      segment_id: `seg_${ar.routeId}_1`,
+      itinerary_id: ar.routeId,
+      itinerary_name: ar.routeName,
+      destination_id: destPt.point_id,
+      segment_sequence: 1,
+      segment_type: ar.vehicleType,
+      route_id: ar.routeId,
+      direction_id: 0,
+      from_point_id: originPt.point_id,
+      to_point_id: destPt.point_id,
+      segment_name:
+        ar.landmarks.length > 0
+          ? `${ar.origin} via ${ar.landmarks.join(" / ")} to ${ar.destination}`
+          : `${ar.origin} to ${ar.destination}`,
+      segment_details: ar.signboard || null,
+      what_to_say: ar.whatToSay || "Para po sa DLSAU",
+      coordinates: [
+        [startLng, startLat],
+        [destLng, destLat],
+      ],
+      fare: fareVal,
+    };
+    results.push({
+      origin: originPt,
+      boardingName: ar.origin,
+      boardingCoordinate: { latitude: startLat, longitude: startLng },
+      destination: destPt,
+      segments: [seg],
+      coordinates: [
+        { latitude: startLat, longitude: startLng },
+        { latitude: destLat, longitude: destLng },
+      ],
+      fare: fareVal,
     });
   }
 
@@ -190,6 +291,9 @@ function computeNearestCustomItineraries(
 export async function fetchNearestCustomItinerary(
   origin: LatLng
 ): Promise<CustomRouteResult[]> {
+  try {
+    await getManagedRoutes();
+  } catch {}
   // Rely directly on the custom DLSAU routes dataset — zero network latency, zero socket errors
   return computeNearestCustomItineraries(
     STATIC_CUSTOM_SEGMENTS as unknown as CustomRouteSegment[],
